@@ -1,0 +1,397 @@
+{% extends "base.html" %}
+
+{% block title %}訓練報告 #{{ run.id }} - OceanAI{% endblock %}
+
+{% block extra_css %}
+.report-header {
+display: flex;
+justify-content: space-between;
+align-items: flex-start;
+border-bottom: 2px solid #eee;
+padding-bottom: 1.5rem;
+margin-bottom: 2rem;
+}
+.model-badge {
+display: inline-flex;
+align-items: center;
+gap: 0.5rem;
+padding: 0.5rem 1rem;
+border-radius: 8px;
+font-weight: 600;
+font-size: 0.9rem;
+}
+.model-badge.yolo {
+background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+color: white;
+}
+.model-badge.cnn {
+background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+color: white;
+}
+.section-title {
+border-left: 4px solid var(--primary-light);
+padding-left: 10px;
+margin: 2rem 0 1.5rem 0;
+font-size: 1.2rem;
+}
+.metrics-grid {
+display: grid;
+grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+gap: 1.5rem;
+margin-bottom: 2rem;
+}
+.metric-card {
+background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+padding: 1.5rem;
+border-radius: 12px;
+text-align: center;
+border: 1px solid #e2e8f0;
+transition: transform 0.2s, box-shadow 0.2s;
+}
+.metric-card:hover {
+transform: translateY(-2px);
+box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+}
+.metric-card .label {
+color: var(--text-light);
+font-size: 0.85rem;
+font-weight: 500;
+margin-bottom: 0.5rem;
+}
+.metric-card .value {
+font-size: 1.8rem;
+font-weight: 700;
+color: var(--primary-med);
+}
+.metric-card .value.small {
+font-size: 1.2rem;
+}
+.params-grid {
+display: grid;
+grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+gap: 1rem;
+background: #f8fafc;
+padding: 1.5rem;
+border-radius: 12px;
+border: 1px solid #e2e8f0;
+}
+.param-item {
+display: flex;
+justify-content: space-between;
+align-items: center;
+padding: 0.75rem 1rem;
+background: white;
+border-radius: 8px;
+border: 1px solid #e2e8f0;
+}
+.param-item .label {
+color: var(--text-light);
+font-size: 0.85rem;
+}
+.param-item .value {
+font-weight: 600;
+color: var(--primary-dark);
+font-family: 'Consolas', 'Monaco', monospace;
+}
+.chart-grid {
+display: grid;
+grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+gap: 2rem;
+margin-top: 1.5rem;
+}
+.chart-box {
+background: white;
+padding: 1.5rem;
+border-radius: 12px;
+border: 1px solid #e2e8f0;
+text-align: center;
+}
+.chart-box h4 {
+margin: 0 0 1rem 0;
+color: var(--text-light);
+font-size: 0.95rem;
+}
+.chart-box img {
+max-width: 100%;
+height: auto;
+border-radius: 8px;
+}
+.chart-box.full-width {
+grid-column: 1 / -1;
+}
+.zoomable-chart {
+transition: transform 0.3s ease, box-shadow 0.3s ease;
+cursor: zoom-in;
+}
+.zoomable-chart:hover {
+transform: scale(1.03);
+box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+}
+{% endblock %}
+
+{% block content %}
+<div class="container-card">
+    <!-- 報告標題 -->
+    <div class="report-header">
+        <div>
+            <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem;">
+                <h1 style="margin: 0;">模型訓練報告</h1>
+                {% if is_yolo %}
+                <span class="model-badge yolo">{{ model_display_name }}</span>
+                {% else %}
+                <span class="model-badge cnn">{{ model_display_name }}</span>
+                {% endif %}
+            </div>
+            <div style="color: var(--text-light);">
+                任務 ID: #{{ run.id }} 
+                | 建立時間: {{ run.timestamp.strftime('%Y-%m-%d %H:%M:%S') if run.timestamp else 'N/A' }}
+                {% if metrics and 'end_time' in metrics %}
+                | 完成時間: {{ metrics.end_time }}
+                | 總時長: {{ "%.1f"|format(metrics.duration_seconds / 60) }} 分鐘
+                {% endif %}
+            </div>
+        </div>
+        <div style="display: flex; gap: 0.75rem;">
+            <a href="{{ url_for('static', filename=run.results_path + '/weights/best.pt') }}" class="btn btn-primary"
+                download>
+                下載最佳模型
+            </a>
+            <a href="{{ url_for('main.training_status') }}" class="btn btn-secondary">返回列表</a>
+        </div>
+    </div>
+
+    <!-- 訓練參數區塊 -->
+    <h3 class="section-title">訓練配置</h3>
+    <div class="params-grid">
+        <div class="param-item">
+            <span class="label">模型架構</span>
+            <span class="value">{{ model_display_name }}</span>
+        </div>
+        <div class="param-item">
+            <span class="label">訓練輪數</span>
+            <span class="value">{{ params.get('epochs', 50) }} epochs</span>
+        </div>
+        <div class="param-item">
+            <span class="label">批次大小</span>
+            <span class="value">{{ params.get('batch_size', 16) }}</span>
+        </div>
+        <div class="param-item">
+            <span class="label">學習率</span>
+            <span class="value">{{ params.get('learning_rate', 0.001) }}</span>
+        </div>
+        <div class="param-item">
+            <span class="label">圖片尺寸</span>
+            <span class="value">{{ params.get('image_size', 224) }}px</span>
+        </div>
+        <div class="param-item">
+            <span class="label">訓練資料集</span>
+            <span class="value">{{ params.get('upload_ids', [])|length }} 個音檔</span>
+        </div>
+        {% if not is_yolo %}
+        <div class="param-item">
+            <span class="label">損失函數</span>
+            <span class="value">
+                {% if params.get('loss_function') == 'focal_loss_multi_class' %}
+                    Multi-class Focal
+                {% elif params.get('loss_function') == 'focal_loss_binary' %}
+                    Binary Focal
+                {% elif params.get('use_focal_loss') %}
+                    Focal Loss (舊版)
+                {% else %}
+                    Cross Entropy
+                {% endif %}
+            </span>
+        </div>
+        {% endif %}
+        {% if total_label_counts %}
+        <div class="param-item" style="grid-column: 1 / -1; display: flex; flex-direction: column; align-items: flex-start; gap: 0.5rem; background: #ebf8ff; border-color: #bee3f8;">
+            <span class="label" style="color: #2b6cb0; font-weight: bold;">訓練標籤總覽</span>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                {% for label_name, count in total_label_counts.items() %}
+                <span style="background: white; color: #2b6cb0; padding: 4px 10px; border-radius: 6px; font-size: 0.9rem; font-weight: 600; border: 1px solid #90cdf4; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
+                    {{ label_name }}: {{ count }} 筆
+                </span>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- 訓練音檔列表 -->
+    <h3 class="section-title">訓練使用音檔 
+        <span style="font-size: 0.9rem; color: var(--text-light); font-weight: normal; margin-left: 8px;">(共 {{ used_audios|length }} 筆)</span>
+    </h3>
+    <div style="background: white; border-radius: 12px; border: 1px solid #e2e8f0; overflow: hidden; margin-bottom: 2rem;">
+        {% if used_audios %}
+        <table class="data-table" style="margin: 0; box-shadow: none;">
+            <thead>
+                <tr style="background: #f8fafc;">
+                    <th style="padding-left: 1.5rem;">音檔名稱</th>
+                    <th>錄製長度</th>
+                    <th>標記分佈</th>
+                    <th style="text-align: right; padding-right: 1.5rem;">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for audio in used_audios %}
+                <tr style="border-bottom: 1px solid #f1f5f9;">
+                    <td style="padding-left: 1.5rem; font-weight: 500;">
+                        {{ audio.file_name }}
+                    </td>
+                    <td style="color: var(--text-light);">
+                        {{ "%.1f"|format(audio.calculated_duration) if audio.calculated_duration is not none else '--' }} 秒
+                    </td>
+                    <td>
+                        {% if audio.label_counts %}
+                            <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+                            {% for label_name, count in audio.label_counts.items() %}
+                                <span style="background: #e2e8f0; color: #475569; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; font-weight: 500;">
+                                    {{ label_name }}: {{ count }}
+                                </span>
+                            {% endfor %}
+                            </div>
+                        {% else %}
+                            <span style="color: #94a3b8; font-size: 0.85rem;">無標記</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: right; padding-right: 1.5rem;">
+                        <a href="{{ url_for('main.results', upload_id=audio.id) }}" class="btn btn-secondary" style="padding: 4px 10px; font-size: 0.85rem;" target="_blank">
+                            查看分析 &rarr;
+                        </a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div style="padding: 2rem; text-align: center; color: #94a3b8;">
+            無音檔關聯紀錄或非透過上傳音檔發起的訓練。
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- 總體評估指標 -->
+    <h3 class="section-title">總體評估指標</h3>
+    <div class="metrics-grid">
+        <div class="metric-card">
+            <div class="label">準確率</div>
+            {% if metrics and metrics.accuracy_top1 is not none %}
+            <div class="value">{{ "%.2f"|format(metrics.accuracy_top1 * 100) }}%</div>
+            {% else %}
+            <div class="value" style="color: #ccc;">N/A</div>
+            {% endif %}
+        </div>
+        {% if is_yolo %}
+        <div class="metric-card">
+            <div class="label">框架</div>
+            <div class="value small">Ultralytics</div>
+        </div>
+        {% else %}
+        <div class="metric-card">
+            <div class="label">框架</div>
+            <div class="value small">PyTorch</div>
+        </div>
+        {% endif %}
+        <div class="metric-card">
+            <div class="label">類別數量</div>
+            <div class="value">{{ metrics.per_class_list|length if metrics and metrics.per_class_list else 'N/A' }}
+            </div>
+        </div>
+    </div>
+
+    <!-- 各類別詳細指標 -->
+    <h3 class="section-title">各類別詳細指標</h3>
+    <div style="overflow-x: auto; margin-bottom: 2rem;">
+        {% if metrics and metrics.per_class_list and metrics.per_class_list|length > 0 %}
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>分類名稱</th>
+                    <th>樣本數 (Support)</th>
+                    <th>精確率 (Precision)</th>
+                    <th>召回率 (Recall)</th>
+                    <th>F1-Score</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for class_metric in metrics.per_class_list %}
+                <tr>
+                    <td style="font-weight: 600; color: var(--primary-dark);">
+                        <span
+                            style="display: inline-block; width: 12px; height: 12px; background: var(--primary-light); border-radius: 3px; margin-right: 8px;"></span>
+                        {{ class_metric.name }}
+                    </td>
+                    <td>
+                        {{ class_metric.support if class_metric.support is defined else '-' }}
+                    </td>
+                    <td>
+                        {% if class_metric.precision is not none %}
+                        {{ "%.3f"|format(class_metric.precision) }}
+                        {% else %}
+                        <span style="color: #ccc;">-</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if class_metric.recall is not none %}
+                        {{ "%.3f"|format(class_metric.recall) }}
+                        {% else %}
+                        <span style="color: #ccc;">-</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if class_metric['f1-score'] is not none %}
+                        <span
+                            style="background: #e0f2fe; padding: 2px 8px; border-radius: 4px; color: #0284c7; font-weight: bold;">
+                            {{ "%.3f"|format(class_metric['f1-score']) }}
+                        </span>
+                        {% else %}
+                        <span style="color: #ccc;">-</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p style="text-align: center; color: #999; padding: 2rem;">詳細分類指標尚未計算。</p>
+        {% endif %}
+    </div>
+
+    <!-- 訓練成效視覺化 -->
+    <h3 class="section-title">訓練成效視覺化</h3>
+
+    <!-- 訓練曲線 (所有模型都有) -->
+    <div class="chart-grid">
+        <div class="chart-box full-width">
+            <h4>訓練過程曲線 (Loss & Accuracy)</h4>
+            <img src="{{ url_for('static', filename=images.results) }}" class="zoomable-chart" alt="訓練曲線圖"
+                onerror="this.parentElement.innerHTML='<p style=\'color:#999;padding:2rem;\'>圖片載入失敗</p>'">
+        </div>
+    </div>
+
+    <!-- 混淆矩陣 (所有模型都有) -->
+    <div class="chart-grid" style="margin-top: 2rem;">
+        <div class="chart-box">
+            <h4>混淆矩陣 (Confusion Matrix)</h4>
+            <img src="{{ url_for('static', filename=images.confusion_matrix) }}" class="zoomable-chart" alt="混淆矩陣圖"
+                onerror="this.parentElement.innerHTML='<p style=\'color:#999;padding:2rem;\'>圖片載入失敗</p>'">
+        </div>
+    </div>
+
+    {% if is_yolo %}
+    <!-- YOLO 特有圖表：預測對比 -->
+    <div class="chart-grid" style="margin-top: 2rem;">
+        <div class="chart-box">
+            <h4>驗證集：真實標籤 (Ground Truth)</h4>
+            <img src="{{ url_for('static', filename=images.val_batch0_labels) }}" class="zoomable-chart" alt="真實標籤範例"
+                onerror="this.parentElement.innerHTML='<p style=\'color:#999;padding:2rem;\'>圖片載入失敗</p>'">
+        </div>
+        <div class="chart-box">
+            <h4>驗證集：模型預測 (Prediction)</h4>
+            <img src="{{ url_for('static', filename=images.val_batch0_pred) }}" class="zoomable-chart" alt="預測結果範例"
+                onerror="this.parentElement.innerHTML='<p style=\'color:#999;padding:2rem;\'>圖片載入失敗</p>'">
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

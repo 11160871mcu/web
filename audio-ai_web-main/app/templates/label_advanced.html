@@ -1,0 +1,687 @@
+{% extends "base.html" %}
+
+{% block title %}進階框選標記 - OceanAI{% endblock %}
+
+{% block extra_css %}
+/* 進階標記頁面專屬樣式 */
+.adv-label-toolbar {
+background: white;
+padding: 1rem 1.5rem;
+border-radius: var(--radius);
+box-shadow: var(--shadow);
+margin-bottom: 1.5rem;
+display: flex;
+justify-content: space-between;
+align-items: center;
+flex-wrap: wrap;
+gap: 1rem;
+}
+
+.adv-label-toolbar .toolbar-left {
+display: flex;
+align-items: center;
+gap: 1rem;
+}
+
+.adv-label-toolbar .toolbar-right {
+display: flex;
+align-items: center;
+gap: 0.75rem;
+}
+
+.adv-label-nav {
+display: flex;
+align-items: center;
+gap: 0.5rem;
+}
+
+.adv-label-nav .page-info {
+padding: 0.5rem 1rem;
+background: #f1f5f9;
+border-radius: 6px;
+font-weight: 600;
+color: var(--primary-dark);
+white-space: nowrap;
+}
+
+.canvas-container {
+position: relative;
+background: white;
+border-radius: var(--radius);
+box-shadow: var(--shadow);
+overflow: hidden;
+margin-bottom: 1.5rem;
+}
+
+.canvas-container img {
+display: block;
+width: 100%;
+height: auto;
+}
+
+.canvas-container canvas {
+position: absolute;
+top: 0;
+left: 0;
+width: 100%;
+height: 100%;
+cursor: crosshair;
+}
+
+/* 標籤選擇面板 */
+.label-panel {
+background: white;
+border-radius: var(--radius);
+box-shadow: var(--shadow);
+padding: 1.5rem;
+margin-bottom: 1.5rem;
+}
+
+.label-panel h3 {
+margin-bottom: 1rem;
+font-size: 1rem;
+}
+
+.label-buttons {
+display: flex;
+flex-wrap: wrap;
+gap: 0.5rem;
+margin-bottom: 1rem;
+}
+
+.label-btn {
+padding: 0.5rem 1rem;
+border: 2px solid #e2e8f0;
+border-radius: 6px;
+background: white;
+cursor: pointer;
+font-size: 0.9rem;
+font-weight: 500;
+transition: all 0.2s ease;
+display: flex;
+align-items: center;
+gap: 6px;
+}
+
+.label-btn:hover {
+border-color: var(--primary-light);
+background: #f0f9ff;
+}
+
+.label-btn.active {
+border-color: var(--primary-med);
+background: linear-gradient(135deg, #f0f7ff, #e8f4f8);
+color: var(--primary-dark);
+font-weight: 600;
+}
+
+.label-btn .color-dot {
+width: 12px;
+height: 12px;
+border-radius: 50%;
+display: inline-block;
+}
+
+/* 框選清單 */
+.bbox-list {
+margin-top: 1rem;
+}
+
+.bbox-list-title {
+font-weight: 600;
+color: var(--primary-dark);
+margin-bottom: 0.5rem;
+font-size: 0.95rem;
+}
+
+.bbox-item {
+display: flex;
+align-items: center;
+justify-content: space-between;
+padding: 0.5rem 0.75rem;
+background: #f8fafc;
+border: 1px solid #e2e8f0;
+border-radius: 6px;
+margin-bottom: 0.4rem;
+font-size: 0.85rem;
+}
+
+.bbox-item .bbox-label-info {
+display: flex;
+align-items: center;
+gap: 8px;
+}
+
+.bbox-item .bbox-delete {
+background: none;
+border: none;
+color: #ef4444;
+cursor: pointer;
+font-size: 1rem;
+padding: 2px 6px;
+border-radius: 4px;
+transition: background 0.2s;
+}
+
+.bbox-item .bbox-delete:hover {
+background: #fee2e2;
+}
+
+/* Toast */
+#advToast {
+visibility: hidden;
+min-width: 280px;
+background-color: var(--primary-dark);
+color: #fff;
+text-align: center;
+border-radius: 8px;
+padding: 14px 20px;
+position: fixed;
+z-index: 999;
+left: 50%;
+bottom: 30px;
+transform: translateX(-50%);
+box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+font-weight: 500;
+}
+#advToast.show {
+visibility: visible;
+animation: advFadeIn 0.4s, advFadeOut 0.4s 2s;
+}
+@keyframes advFadeIn { from { bottom: 0; opacity: 0; } to { bottom: 30px; opacity: 1; } }
+@keyframes advFadeOut { from { bottom: 30px; opacity: 1; } to { bottom: 0; opacity: 0; } }
+
+/* 快捷鍵提示 */
+.shortcut-hint {
+font-size: 0.8rem;
+color: var(--text-light);
+margin-top: 0.5rem;
+}
+
+.shortcut-hint kbd {
+background: #f1f5f9;
+border: 1px solid #d1d5db;
+border-radius: 3px;
+padding: 1px 5px;
+font-family: monospace;
+font-size: 0.8rem;
+}
+{% endblock %}
+
+{% block content %}
+<div class="container-card"
+    style="background: transparent; box-shadow: none; padding: 0; max-width: 1000px; margin: 0 auto;">
+    <!-- 工具列 -->
+    <div class="adv-label-toolbar">
+        <div class="toolbar-left">
+            <a href="{{ url_for('main.labeling_page', upload_id=upload.id) }}" class="btn btn-secondary"
+                style="font-size: 0.9rem;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    style="margin-right: 4px;">
+                    <polyline points="15 18 9 12 15 6"></polyline>
+                </svg>
+                返回標記
+            </a>
+            <div>
+                <h2 style="margin: 0; font-size: 1.15rem;">進階框選標記</h2>
+                <div style="color: var(--text-light); font-size: 0.8rem; margin-top: 2px;">
+                    {{ upload.original_filename }}
+                </div>
+            </div>
+        </div>
+        <div class="toolbar-right">
+            <div class="adv-label-nav">
+                {% if current_index > 0 %}
+                <a href="{{ url_for('main.label_advanced_page', upload_id=upload.id, index=current_index - 1) }}"
+                    class="btn btn-secondary btn-sm" id="btnPrev">上一張</a>
+                {% else %}
+                <button class="btn btn-secondary btn-sm" disabled>上一張</button>
+                {% endif %}
+
+                <span class="page-info" style="display:flex; align-items:center; gap:5px;">
+                    <input type="number" value="{{ current_index + 1 }}" min="1" max="{{ total }}"
+                        style="width: 50px; text-align: center; border: 1px solid #ccc; border-radius: 4px; padding: 2px; background: transparent; color: inherit; font-family: inherit; font-size: 1rem;"
+                        onkeydown="if(event.key === 'Enter') { let val = parseInt(this.value); if(val >= 1 && val <= {{ total }}) { let u = new URL(window.location.href); u.searchParams.set('index', val - 1); window.location.href = u.href; } }"
+                        onchange="let val = parseInt(this.value); if(val >= 1 && val <= {{ total }}) { let u = new URL(window.location.href); u.searchParams.set('index', val - 1); window.location.href = u.href; }">
+                    / {{ total }}
+                </span>
+
+                {% if current_index < total - 1 %} <a
+                    href="{{ url_for('main.label_advanced_page', upload_id=upload.id, index=current_index + 1) }}"
+                    class="btn btn-secondary btn-sm" id="btnNext">下一張</a>
+                    {% else %}
+                    <button class="btn btn-secondary btn-sm" disabled>下一張</button>
+                    {% endif %}
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="saveAnnotations()" id="btnSave">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    style="margin-right: 4px;">
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                    <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                    <polyline points="7 3 7 8 15 8"></polyline>
+                </svg>
+                儲存標記
+            </button>
+        </div>
+    </div>
+
+    <!-- 標籤選擇面板 -->
+    <div class="label-panel">
+        <h3>選擇標籤類別</h3>
+        <div class="label-buttons" id="labelButtons">
+            <!-- 鯨豚類 -->
+             <button type="button" class="label-btn" data-label="unknown" data-color="#2563eb">
+                <span class="color-dot" style="background: #2563eb;"></span>
+                未知 (Unknown)
+            </button>
+            <button type="button" class="label-btn" data-label="whale" data-color="#2563eb">
+                <span class="color-dot" style="background: #2563eb;"></span>
+                鯨魚 (Whale)
+            </button>
+            <button type="button" class="label-btn active" data-label="whale_upsweep" data-color="#3b82f6">
+                <span class="color-dot" style="background: #3b82f6;"></span>
+                上升型 (Upsweep)
+            </button>
+            <button type="button" class="label-btn" data-label="whale_downsweep" data-color="#8b5cf6">
+                <span class="color-dot" style="background: #8b5cf6;"></span>
+                下降型 (Downsweep)
+            </button>
+            <button type="button" class="label-btn" data-label="whale_concave" data-color="#06b6d4">
+                <span class="color-dot" style="background: #06b6d4;"></span>
+                U型 (Concave)
+            </button>
+            <button type="button" class="label-btn" data-label="whale_convex" data-color="#14b8a6">
+                <span class="color-dot" style="background: #14b8a6;"></span>
+                倒U型 (Convex)
+            </button>
+            <button type="button" class="label-btn" data-label="whale_click" data-color="#f59e0b">
+                <span class="color-dot" style="background: #f59e0b;"></span>
+                嘎搭聲 (Click)
+            </button>
+            <button type="button" class="label-btn" data-label="whale_burst" data-color="#a855f7">
+                <span class="color-dot" style="background: #a855f7;"></span>
+                突發脈衝 (Burst)
+            </button>
+            <button type="button" class="label-btn" data-label="whale_constant" data-color="#ec4899">
+                <span class="color-dot" style="background: #ec4899;"></span>
+                常數型 (Constant)
+            </button>
+            <!-- 船舶/環境 -->
+            <button type="button" class="label-btn" data-label="ship" data-color="#ef4444">
+                <span class="color-dot" style="background: #ef4444;"></span>
+                船舶 (Ship)
+            </button>
+            <button type="button" class="label-btn" data-label="noise" data-color="#6b7280">
+                <span class="color-dot" style="background: #6b7280;"></span>
+                噪音 (Noise)
+            </button>
+            <button type="button" class="label-btn" data-label="piling" data-color="#d97706">
+                <span class="color-dot" style="background: #d97706;"></span>
+                打樁 (Piling)
+            </button>
+        </div>
+        <div class="shortcut-hint">
+            提示：在圖片上拖曳滑鼠繪製框選區域。點擊已有的框可刪除。按 <kbd>S</kbd> 儲存，<kbd>&#8592;</kbd> <kbd>&#8594;</kbd> 切換頁面。
+        </div>
+    </div>
+
+    <!-- 繪圖區域 -->
+    <div class="canvas-container" id="canvasContainer">
+        <img id="spectrogramImg" src="{{ url_for('static', filename=result.spectrogram_training_url) }}"
+            alt="Spectrogram {{ current_index + 1 }}" crossorigin="anonymous">
+        <canvas id="drawCanvas"></canvas>
+    </div>
+    <div
+        style="font-size: 0.85rem; color: var(--text-light); margin-bottom: 1rem; text-align: center; font-style: italic;">
+        使用無座標軸版本頻譜圖進行標記，確保與模型訓練時的圖片一致
+    </div>
+
+    <!-- 已標記清單 -->
+    <div class="label-panel">
+        <div class="bbox-list">
+            <div class="bbox-list-title" id="bboxListTitle">已標記區域 (0)</div>
+            <div id="bboxListContainer">
+                <div style="color: var(--text-light); font-size: 0.9rem; padding: 0.5rem 0;">
+                    尚無框選標記，請在圖片上拖曳滑鼠繪製。
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="advToast">已儲存</div>
+
+<script>
+    // --- 全域狀態 ---
+    const RESULT_ID = {{ result.id }};
+    const UPLOAD_ID = {{ upload.id }};
+    const CURRENT_INDEX = {{ current_index }};
+    const TOTAL = {{ total }};
+
+    // 標籤顏色對照
+    const LABEL_COLORS = {};
+    document.querySelectorAll('.label-btn').forEach(btn => {
+        LABEL_COLORS[btn.dataset.label] = btn.dataset.color;
+    });
+
+    // 標籤顯示名稱
+    const LABEL_NAMES = {
+        'whale': '鯨魚 (Whale)',
+        'whale_upsweep': '上升型 (Upsweep)',
+        'whale_downsweep': '下降型 (Downsweep)',
+        'whale_concave': 'U型 (Concave)',
+        'whale_convex': '倒U型 (Convex)',
+        'whale_click': '嘎搭聲 (Click)',
+        'whale_constant': '定頻型 (Constant)',
+        'whale_burst': '突發脈衝 (Burst)',
+        'whale_constant': '常數型 (Constant)',
+        'ship': '船舶 (Ship)',
+        'noise': '噪音 (Noise)',
+        'piling': '打樁 (Piling)'
+    };
+
+    let currentLabel = 'whale_upsweep';
+    let boxes = []; // { label, x, y, width, height }
+    let isDrawing = false;
+    let startX = 0, startY = 0;
+    let hasUnsavedChanges = false;
+
+    const canvas = document.getElementById('drawCanvas');
+    const ctx = canvas.getContext('2d');
+    const img = document.getElementById('spectrogramImg');
+    const container = document.getElementById('canvasContainer');
+
+    // --- 初始化 ---
+    function initCanvas() {
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        redraw();
+    }
+
+    img.addEventListener('load', function () {
+        initCanvas();
+        loadAnnotations();
+    });
+
+    if (img.complete) {
+        initCanvas();
+        loadAnnotations();
+    }
+
+    window.addEventListener('resize', function () {
+        // canvas 大小不變 (用 CSS 縮放), 只需 redraw
+        redraw();
+    });
+
+    // --- 標籤選擇 ---
+    document.getElementById('labelButtons').addEventListener('click', function (e) {
+        const btn = e.target.closest('.label-btn');
+        if (!btn) return;
+        document.querySelectorAll('.label-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentLabel = btn.dataset.label;
+    });
+
+    // --- Canvas 繪製邏輯 ---
+    function getCanvasCoords(e) {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        return {
+            x: (e.clientX - rect.left) * scaleX,
+            y: (e.clientY - rect.top) * scaleY
+        };
+    }
+
+    canvas.addEventListener('mousedown', function (e) {
+        if (e.button !== 0) return; // 只處理左鍵
+        const coords = getCanvasCoords(e);
+
+        // 檢查是否點擊到已有的框 -> 刪除
+        const clickedIdx = findBoxAt(coords.x, coords.y);
+        if (clickedIdx >= 0) {
+            boxes.splice(clickedIdx, 1);
+            hasUnsavedChanges = true;
+            redraw();
+            updateBBoxList();
+            return;
+        }
+
+        isDrawing = true;
+        startX = coords.x;
+        startY = coords.y;
+    });
+
+    canvas.addEventListener('mousemove', function (e) {
+        if (!isDrawing) return;
+        const coords = getCanvasCoords(e);
+        redraw();
+        // 繪製正在拖曳的框
+        const color = LABEL_COLORS[currentLabel] || '#3b82f6';
+        drawRect(startX, startY, coords.x - startX, coords.y - startY, color, true);
+    });
+
+    canvas.addEventListener('mouseup', function (e) {
+        if (!isDrawing) return;
+        isDrawing = false;
+        const coords = getCanvasCoords(e);
+
+        const w = coords.x - startX;
+        const h = coords.y - startY;
+
+        // 忽略太小的框 (可能是誤擊)
+        if (Math.abs(w) < 5 || Math.abs(h) < 5) {
+            redraw();
+            return;
+        }
+
+        // 正規化 (處理反向拖曳)
+        const nx = w < 0 ? startX + w : startX;
+        const ny = h < 0 ? startY + h : startY;
+        const nw = Math.abs(w);
+        const nh = Math.abs(h);
+
+        // 轉換為百分比
+        boxes.push({
+            label: currentLabel,
+            x: nx / canvas.width,
+            y: ny / canvas.height,
+            width: nw / canvas.width,
+            height: nh / canvas.height
+        });
+
+        hasUnsavedChanges = true;
+        redraw();
+        updateBBoxList();
+    });
+
+    // 防止 canvas 上的右鍵選單
+    canvas.addEventListener('contextmenu', function (e) {
+        e.preventDefault();
+    });
+
+    // --- 尋找被點擊的框 ---
+    function findBoxAt(px, py) {
+        // 從後向前搜尋 (後繪製的在上面)
+        for (let i = boxes.length - 1; i >= 0; i--) {
+            const b = boxes[i];
+            const bx = b.x * canvas.width;
+            const by = b.y * canvas.height;
+            const bw = b.width * canvas.width;
+            const bh = b.height * canvas.height;
+            if (px >= bx && px <= bx + bw && py >= by && py <= by + bh) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    // --- 繪製矩形 ---
+    function drawRect(x, y, w, h, color, isDraft) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = isDraft ? 2 : 3;
+        ctx.setLineDash(isDraft ? [6, 3] : []);
+        ctx.strokeRect(x, y, w, h);
+
+        // 半透明填充
+        ctx.fillStyle = color + (isDraft ? '15' : '20');
+        ctx.fillRect(x, y, w, h);
+
+        ctx.setLineDash([]);
+    }
+
+    // --- 重繪所有框 ---
+    function redraw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        boxes.forEach((box, idx) => {
+            const color = LABEL_COLORS[box.label] || '#3b82f6';
+            const x = box.x * canvas.width;
+            const y = box.y * canvas.height;
+            const w = box.width * canvas.width;
+            const h = box.height * canvas.height;
+
+            drawRect(x, y, w, h, color, false);
+
+            // 繪製標籤文字
+            const displayName = LABEL_NAMES[box.label] || box.label;
+            const fontSize = Math.max(12, Math.min(16, canvas.width / 60));
+            ctx.font = 'bold ' + fontSize + 'px Inter, sans-serif';
+            const textWidth = ctx.measureText(displayName).width;
+            const textHeight = fontSize + 6;
+
+            // 標籤背景
+            const labelY = y > textHeight + 2 ? y - textHeight - 2 : y;
+            ctx.fillStyle = color + 'DD';
+            ctx.fillRect(x, labelY, textWidth + 10, textHeight);
+
+            // 標籤文字
+            ctx.fillStyle = '#ffffff';
+            ctx.fillText(displayName, x + 5, labelY + fontSize);
+        });
+    }
+
+    // --- 更新已標記清單 ---
+    function updateBBoxList() {
+        const titleEl = document.getElementById('bboxListTitle');
+        const containerEl = document.getElementById('bboxListContainer');
+
+        titleEl.textContent = '已標記區域 (' + boxes.length + ')';
+
+        if (boxes.length === 0) {
+            containerEl.innerHTML = '<div style="color: var(--text-light); font-size: 0.9rem; padding: 0.5rem 0;">尚無框選標記，請在圖片上拖曳滑鼠繪製。</div>';
+            return;
+        }
+
+        let html = '';
+        boxes.forEach((box, idx) => {
+            const color = LABEL_COLORS[box.label] || '#3b82f6';
+            const name = LABEL_NAMES[box.label] || box.label;
+            html += '<div class="bbox-item">'
+                + '<div class="bbox-label-info">'
+                + '<span class="color-dot" style="width:10px;height:10px;border-radius:50%;background:' + color + ';display:inline-block;"></span>'
+                + '<span>' + name + '</span>'
+                + '</div>'
+                + '<button class="bbox-delete" onclick="deleteBox(' + idx + ')" title="刪除此標記">X</button>'
+                + '</div>';
+        });
+        containerEl.innerHTML = html;
+    }
+
+    function deleteBox(idx) {
+        boxes.splice(idx, 1);
+        hasUnsavedChanges = true;
+        redraw();
+        updateBBoxList();
+    }
+
+    // --- API 互動 ---
+    function loadAnnotations() {
+        fetch('/api/bbox/' + RESULT_ID)
+            .then(r => r.json())
+            .then(data => {
+                boxes = data.map(d => ({
+                    label: d.label,
+                    x: d.x,
+                    y: d.y,
+                    width: d.width,
+                    height: d.height
+                }));
+                hasUnsavedChanges = false;
+                redraw();
+                updateBBoxList();
+            })
+            .catch(err => console.error('載入標記失敗:', err));
+    }
+
+    function saveAnnotations() {
+        fetch('/api/bbox/' + RESULT_ID, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ boxes: boxes })
+        })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    hasUnsavedChanges = false;
+                    showAdvToast('已儲存 ' + data.count + ' 個標記');
+                } else {
+                    alert('儲存失敗');
+                }
+            })
+            .catch(err => {
+                console.error('儲存失敗:', err);
+                alert('儲存時發生錯誤');
+            });
+    }
+
+    function showAdvToast(msg) {
+        const toast = document.getElementById('advToast');
+        toast.textContent = msg;
+        toast.className = 'show';
+        setTimeout(function () { toast.className = ''; }, 2500);
+    }
+
+    // --- 鍵盤快捷鍵 ---
+    document.addEventListener('keydown', function (e) {
+        // 如果焦點在 input/select 中，不處理
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+
+        if (e.key === 's' || e.key === 'S') {
+            e.preventDefault();
+            saveAnnotations();
+        } else if (e.key === 'ArrowLeft') {
+            e.preventDefault();
+            const prevBtn = document.getElementById('btnPrev');
+            if (prevBtn) {
+                if (hasUnsavedChanges && !confirm('有未儲存的變更，確定要離開嗎?')) return;
+                prevBtn.click();
+            }
+        } else if (e.key === 'ArrowRight') {
+            e.preventDefault();
+            const nextBtn = document.getElementById('btnNext');
+            if (nextBtn) {
+                if (hasUnsavedChanges && !confirm('有未儲存的變更，確定要離開嗎?')) return;
+                nextBtn.click();
+            }
+        } else if (e.key === 'z' || e.key === 'Z') {
+            // Ctrl+Z: 復原最後一個框
+            if (e.ctrlKey && boxes.length > 0) {
+                e.preventDefault();
+                boxes.pop();
+                hasUnsavedChanges = true;
+                redraw();
+                updateBBoxList();
+            }
+        }
+    });
+
+    // 離開頁面前警告
+    window.addEventListener('beforeunload', function (e) {
+        if (hasUnsavedChanges) {
+            e.preventDefault();
+            e.returnValue = '';
+        }
+    });
+</script>
+{% endblock %}

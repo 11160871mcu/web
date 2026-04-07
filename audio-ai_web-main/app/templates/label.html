@@ -1,0 +1,644 @@
+{% extends "base.html" %}
+
+{% block title %}資料標記 - OceanAI{% endblock %}
+
+{% block extra_css %}
+/* 標記頁面專屬樣式 */
+.auto-label-box {
+background-color: #f0f9ff; /* 極淡藍 */
+border: 1px solid #bae6fd;
+padding: 1.5rem;
+border-radius: var(--radius);
+margin-bottom: 2rem;
+display: flex;
+align-items: center;
+gap: 1.5rem;
+}
+
+.card-grid {
+display: grid;
+grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+gap: 1.5rem;
+margin-bottom: 2rem;
+}
+
+.label-card {
+background: var(--white);
+border-radius: var(--radius);
+box-shadow: var(--shadow);
+overflow: hidden;
+transition: transform 0.2s, box-shadow 0.2s;
+border: 1px solid #eee;
+}
+
+.label-card:hover {
+transform: translateY(-4px);
+box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+}
+
+.card-header {
+background-color: #f8fafc;
+padding: 0.8rem 1rem;
+border-bottom: 1px solid #eee;
+display: flex;
+justify-content: space-between;
+align-items: center;
+font-size: 0.9rem;
+color: var(--text-light);
+}
+
+.card-image {
+width: 100%;
+height: auto;
+display: block;
+min-height: 150px;
+object-fit: contain;
+}
+
+.card-body {
+padding: 1rem;
+}
+
+/* 標記下拉選單優化 */
+select.label-select {
+width: 100%;
+padding: 10px;
+border: 2px solid #e2e8f0;
+border-radius: 6px;
+background-color: #fff;
+font-size: 1rem;
+color: var(--text-main);
+cursor: pointer;
+}
+
+select.label-select:focus {
+border-color: var(--primary-light);
+}
+
+select.label-select.labeled {
+border-color: #10b981; /* Green */
+background-color: #ecfdf5;
+color: #065f46;
+font-weight: 600;
+}
+
+/* Toast 通知樣式 */
+#toast {
+visibility: hidden;
+min-width: 300px;
+background-color: var(--primary-dark);
+color: #fff;
+text-align: center;
+border-radius: 8px;
+padding: 16px;
+position: fixed;
+z-index: 999;
+left: 50%;
+bottom: 30px;
+transform: translateX(-50%);
+box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+font-weight: 500;
+}
+#toast.show {
+visibility: visible;
+animation: fadein 0.5s, fadeout 0.5s 2.5s;
+}
+@keyframes fadein { from {bottom: 0; opacity: 0;} to {bottom: 30px; opacity: 1;} }
+@keyframes fadeout { from {bottom: 30px; opacity: 1;} to {bottom: 0; opacity: 0;} }
+
+/* 圖片放大 Modal 樣式 */
+.zoom-modal {
+display: none;
+position: fixed;
+z-index: 1000;
+left: 0;
+top: 0;
+width: 100%;
+height: 100%;
+background-color: rgba(0, 0, 0, 0.9);
+align-items: center;
+justify-content: center;
+}
+.zoom-modal.show {
+display: flex;
+}
+.zoom-modal-img-container {
+    position: relative;
+    display: inline-flex;
+    max-width: 90vw;
+    max-height: 80vh;
+    border-radius: 4px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    animation: zoomIn 0.3s ease;
+    background: #111;
+    align-items: center;
+    justify-content: center;
+}
+.zoom-modal-img {
+    display: block;
+    max-width: 90vw;
+    max-height: 80vh;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+}
+/* 放大鏡框框樣式 */
+.img-magnifier-glass {
+position: absolute;
+border: 3px solid rgba(255, 255, 255, 0.8);
+border-radius: 50%;
+cursor: crosshair;
+/* 放大鏡大小 */
+width: 200px;
+height: 200px;
+box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+pointer-events: none; /* 讓滑鼠事件穿透到下方的圖片 */
+display: none; /* 預設隱藏 */
+background-repeat: no-repeat;
+z-index: 1005;
+}
+.zoom-modal-close {
+position: absolute;
+top: 15px;
+right: 20px;
+color: #f1f1f1;
+font-size: 40px;
+font-weight: bold;
+cursor: pointer;
+transition: color 0.2s;
+z-index: 1002;
+}
+.zoom-modal-close:hover {
+color: #fff;
+}
+.zoom-modal-controls {
+position: absolute;
+bottom: 20px;
+left: 50%;
+transform: translateX(-50%);
+background: rgba(255, 255, 255, 0.95);
+padding: 10px 20px;
+border-radius: 8px;
+display: flex;
+gap: 15px;
+align-items: center;
+z-index: 1002;
+box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+}
+.zoom-modal-nav {
+background: none;
+border: none;
+font-size: 24px;
+cursor: pointer;
+color: var(--primary-dark);
+padding: 5px 10px;
+border-radius: 4px;
+transition: background 0.2s;
+}
+.zoom-modal-nav:hover:not(:disabled) {
+background: #e2e8f0;
+}
+.zoom-modal-nav:disabled {
+color: #cbd5e1;
+cursor: not-allowed;
+}
+@keyframes zoomIn {
+from { transform: scale(0.9); opacity: 0; }
+to { transform: scale(1); opacity: 1; }
+}
+{% endblock %}
+
+{% block content %}
+<div class="container-card" style="background: transparent; box-shadow: none; padding: 0;">
+    <div
+        style="background: white; padding: 1.5rem; border-radius: var(--radius); box-shadow: var(--shadow); margin-bottom: 2rem; display: flex; justify-content: space-between; align-items: center;">
+        <div>
+            <h2 style="margin-bottom: 0.5rem;">資料標記模式</h2>
+            <div style="color: var(--text-light); font-size: 0.9rem;">
+                <span>檔案：{{ upload.original_filename }}</span> |
+                <span>時間：{{ upload.upload_timestamp.strftime('%Y-%m-%d %H:%M') }}</span>
+            </div>
+        </div>
+        <div style="display: flex; gap: 10px;">
+            <button onclick="clearAllLabels({{ upload.id }})" class="btn" style="background-color: #ef4444; color: white; font-size: 0.9rem;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px; vertical-align: text-bottom;">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                </svg>清空標記
+            </button>
+            <a href="{{ url_for('main.label_advanced_page', upload_id=upload.id) }}" class="btn btn-primary"
+                style="font-size: 0.9rem;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    style="margin-right: 4px;">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                    <line x1="3" y1="9" x2="21" y2="9"></line>
+                    <line x1="9" y1="21" x2="9" y2="9"></line>
+                </svg>
+                進階框選標記
+            </a>
+            <a href="{{ url_for('main.results', upload_id=upload.id) }}" class="btn btn-secondary">返回結果</a>
+            <a href="{{ url_for('main.history') }}" class="btn btn-secondary">歷史紀錄</a>
+        </div>
+    </div>
+
+    <div class="auto-label-box">
+        <h4 style="margin: 0; color: var(--primary-dark); white-space: nowrap;">AI 輔助標記</h4>
+        <form action="{{ url_for('main.auto_label') }}" method="post"
+            style="display:flex; gap:10px; flex-grow:1; align-items: center; flex-wrap: wrap;">
+            <input type="hidden" name="upload_id" value="{{ upload.id }}">
+            {% if training_runs and training_runs|length > 0 %}
+            <select name="run_id" class="form-select" required
+                style="flex-grow: 1; padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px;">
+                <option value="">-- 選擇已訓練的模型 --</option>
+                {% for run in training_runs %}
+                <option value="{{ run.id }}">
+                    #{{ run.id }} - {{ run.get_model_display_name() }}
+                    ({{ run.timestamp.strftime('%m/%d %H:%M') }})
+                </option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="btn btn-primary">執行自動標記</button>
+            {% else %}
+            <span style="color: #666; font-size: 0.9rem;">尚無已完成的訓練模型，請先前往「訓練」頁面訓練模型。</span>
+            <a href="{{ url_for('main.training_status') }}" class="btn btn-secondary">前往訓練</a>
+            {% endif %}
+        </form>
+    </div>
+
+    <div class="card-grid">
+        {% for item in pagination.items %}
+        <div class="label-card">
+            <div class="card-header">
+                <span>#{{ loop.index + (pagination.page - 1) * pagination.per_page }}</span>
+                {% if item.detect_type == 1 %}
+                <span class="status-badge" style="background: #e0f2fe; color: #0369a1;">AI 辨識</span>
+                {% else %}
+                <span class="status-badge" style="background: #f1f5f9; color: #64748b;">人工</span>
+                {% endif %}
+            </div>
+
+            {% if item.spectrogram_url %}
+            <a href="#" class="zoom-trigger" data-index="{{ loop.index0 }}" data-id="{{ item.id }}"
+                onclick="openZoomModal(event, this)">
+                <img src="{{ url_for('static', filename=item.spectrogram_url) }}" class="card-image" alt="頻譜圖"
+                    loading="lazy">
+            </a>
+            {% else %}
+            <div
+                style="height: 150px; display: flex; align-items: center; justify-content: center; background: #eee; color: #999;">
+                無影像
+            </div>
+            {% endif %}
+
+            <div class="card-body">
+                <select class="label-select {{ 'labeled' if item.event_type and item.event_type != 0 else '' }}"
+                    onchange="updateLabel({{ item.id }}, this)">
+                    <option value="0" {{ 'selected' if item.event_type==0 }}>0. 未知</option>
+                    <option value="1" {{ 'selected' if item.event_type==1 }}>1. 鯨魚 (Whale)</option>
+
+                    <optgroup label="鯨豚聲紋">
+                        <option value="10" {{ 'selected' if item.event_type==10 }}>10. 上升型 (Upsweep)</option>
+                        <option value="11" {{ 'selected' if item.event_type==11 }}>11. 下降型 (Downsweep)</option>
+                        <option value="12" {{ 'selected' if item.event_type==12 }}>12. U型 (Concave)</option>
+                        <option value="13" {{ 'selected' if item.event_type==13 }}>13. 倒U型 (Convex)</option>
+                        <option value="14" {{ 'selected' if item.event_type==14 }}>14. sin型 (Sine)</option>
+                        <option value="15" {{ 'selected' if item.event_type==15 }}>15. 嘎搭聲 (Click)</option>
+                        <option value="16" {{ 'selected' if item.event_type==16 }}>16. 突發脈衝聲 (Burst)</option>
+                        <option value="17">17. 常數型 (Constant)</option>
+                    </optgroup>
+
+                    <optgroup label="環境與干擾">
+                        <option value="90" {{ 'selected' if item.event_type==90 }}>90. 環境噪音 (Noise)</option>
+                        <option value="91" {{ 'selected' if item.event_type==91 }}>91. 船舶 (Ship)</option>
+                        <option value="92" {{ 'selected' if item.event_type==92 }}>92. 風機打樁 (Piling)</option>
+                    </optgroup>
+                </select>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- 移除腳本產生的陣列，改由 DOM 中讀取以避免被 Formatter 破壞 Jinja 語法 -->
+
+    <div style="display: flex; justify-content: center; gap: 10px; margin-top: 2rem; padding-bottom: 2rem;">
+        {% if pagination.has_prev %}
+        <a href="{{ url_for('main.labeling_page', upload_id=upload.id, page=pagination.prev_num) }}"
+            class="btn btn-secondary">上一頁</a>
+        {% endif %}
+
+        <span class="btn"
+            style="background: white; border: 1px solid #ddd; color: var(--primary-dark); display: flex; align-items: center; padding: 4px 10px; gap: 5px;">
+            <input type="number" value="{{ pagination.page }}" min="1" max="{{ pagination.pages }}"
+                style="width: 50px; text-align: center; border: 1px solid #ccc; border-radius: 4px; padding: 2px;"
+                onkeydown="if(event.key === 'Enter') { let u = new URL(window.location.href); u.searchParams.set('page', this.value); window.location.href = u.href; }"
+                onchange="let u = new URL(window.location.href); u.searchParams.set('page', this.value); window.location.href = u.href;">
+            / {{ pagination.pages }}
+        </span>
+
+        {% if pagination.has_next %}
+        <a href="{{ url_for('main.labeling_page', upload_id=upload.id, page=pagination.next_num) }}"
+            class="btn btn-secondary">下一頁</a>
+        {% endif %}
+    </div>
+</div>
+
+<div id="toast">儲存成功</div>
+
+<!-- 圖片放大 Modal -->
+<div id="imageZoomModal" class="zoom-modal" onclick="closeModalOnBgClick(event)">
+    <span class="zoom-modal-close" onclick="closeZoomModal()">&times;</span>
+    <div id="zoomModalImgContainer" class="zoom-modal-img-container">
+        <!-- 放大鏡元素 -->
+        <div id="magnifierGlass" class="img-magnifier-glass"></div>
+        <img id="zoomModalImg" class="zoom-modal-img" src="" onmousemove="moveMagnifier(event)"
+            onmouseleave="hideMagnifier()" onmouseenter="showMagnifier()">
+    </div>
+    <div class="zoom-modal-controls" onclick="event.stopPropagation()">
+        <button id="modalPrevBtn" class="zoom-modal-nav" onclick="navigateModal(-1)">&#8592; 上一張</button>
+        <div style="display:flex; flex-direction:column; align-items:center; gap:5px;">
+            <span id="modalDisplayNb" style="font-weight:bold; color:var(--primary-dark); font-size:0.9rem;"></span>
+            <select id="modalLabelSelect" class="label-select"
+                style="min-width: 150px; padding: 6px; font-size: 0.9rem;" onchange="updateLabelFromModal(this)">
+                <option value="0">0. 未知</option>
+                <option value="1">1. 鯨魚 (Whale)</option>
+                <optgroup label="鯨豚聲紋">
+                    <option value="10">10. 上升型 (Upsweep)</option>
+                    <option value="11">11. 下降型 (Downsweep)</option>
+                    <option value="12">12. U型 (Concave)</option>
+                    <option value="13">13. 倒U型 (Convex)</option>
+                    <option value="14">14. sin型 (Sine)</option>
+                    <option value="15">15. 嘎搭聲 (Click)</option>
+                    <option value="16">16. 突發脈衝聲 (Burst)</option>
+                    <option value="17">17. 定頻型 (Constant)</option>
+                </optgroup>
+                <optgroup label="環境與干擾">
+                    <option value="90">90. 環境噪音 (Noise)</option>
+                    <option value="91">91. 船舶 (Ship)</option>
+                    <option value="92">92. 風機打樁 (Piling)</option>
+                </optgroup>
+            </select>
+        </div>
+        <button id="modalNextBtn" class="zoom-modal-nav" onclick="navigateModal(1)">下一張 &#8594;</button>
+    </div>
+</div>
+
+<script>
+    const MAGNIFIER_ZOOM_LEVEL = 2; // 放大兩倍
+
+    function moveMagnifier(e) {
+        const img = document.getElementById("zoomModalImg");
+        const glass = document.getElementById("magnifierGlass");
+
+        // 如果圖片還沒載入或玻璃隱藏中，則不處理
+        if (!img.src || glass.style.display === "none") return;
+
+        e.preventDefault();
+
+        // 取得游標相對於圖片元素的位置
+        const pos = getCursorPos(e, img);
+        let x = pos.x;
+        let y = pos.y;
+
+        // 避免放大鏡移出圖片邊界
+        const w = glass.offsetWidth / 2;
+        const h = glass.offsetHeight / 2;
+        if (x > img.width) x = img.width;
+        if (x < 0) x = 0;
+        if (y > img.height) y = img.height;
+        if (y < 0) y = 0;
+
+        // 設定放大鏡元素的位置
+        glass.style.left = (x - w + img.offsetLeft) + "px";
+        glass.style.top = (y - h + img.offsetTop) + "px";
+
+        // 顯示放大鏡內部的圖片細節
+        // 算出圖片原始解析度與畫面上顯示大小的比例
+        let bw = 3; // border width
+        let backgroundX = ((x * MAGNIFIER_ZOOM_LEVEL) - w + bw);
+        let backgroundY = ((y * MAGNIFIER_ZOOM_LEVEL) - h + bw);
+        glass.style.backgroundPosition = "-" + backgroundX + "px -" + backgroundY + "px";
+    }
+
+    function getCursorPos(e, img) {
+        let a = img.getBoundingClientRect();
+        // 考慮頁面滾動計算 X, Y
+        let x = e.pageX - a.left - window.pageXOffset;
+        let y = e.pageY - a.top - window.pageYOffset;
+        return { x: x, y: y };
+    }
+
+    function initMagnifier() {
+        const img = document.getElementById("zoomModalImg");
+        const glass = document.getElementById("magnifierGlass");
+        glass.style.backgroundImage = "url('" + img.src + "')";
+        // 設定背景圖片尺寸為放大 N 倍
+        glass.style.backgroundSize = (img.width * MAGNIFIER_ZOOM_LEVEL) + "px " + (img.height * MAGNIFIER_ZOOM_LEVEL) + "px";
+    }
+
+    function showMagnifier() {
+        const glass = document.getElementById("magnifierGlass");
+        glass.style.display = "block";
+        initMagnifier(); // 滑鼠進入時重新初始化放大圖背景
+    }
+
+    function hideMagnifier() {
+        const glass = document.getElementById("magnifierGlass");
+        glass.style.display = "none";
+    }
+
+    function closeModalOnBgClick(event) {
+        if (event.target.id === 'imageZoomModal') {
+            closeZoomModal();
+        }
+    }
+
+    let currentModalIndex = -1;
+    let currentModalCetaceanId = -1;
+
+    function openZoomModal(event, elementOrIndex) {
+        if (event) event.preventDefault();
+
+        const triggers = document.querySelectorAll('.zoom-trigger');
+        let index = -1;
+        let trigger = null;
+
+        if (typeof elementOrIndex === 'number') {
+            index = elementOrIndex;
+            trigger = triggers[index];
+        } else {
+            trigger = elementOrIndex;
+            index = parseInt(trigger.getAttribute('data-index'));
+        }
+
+        if (!trigger) return;
+
+        currentModalIndex = index;
+        currentModalCetaceanId = parseInt(trigger.getAttribute('data-id'));
+
+        const card = trigger.closest('.label-card');
+        const imgSrc = trigger.querySelector('.card-image').src;
+        const displayNumber = card.querySelector('.card-header span').innerText;
+        const currentLabelId = card.querySelector('.label-select').value;
+
+        const modal = document.getElementById("imageZoomModal");
+        const modalImg = document.getElementById("zoomModalImg");
+        modalImg.src = imgSrc;
+
+        // 更新 Modal 內的資訊
+        document.getElementById("modalDisplayNb").innerText = displayNumber;
+        const modalSelect = document.getElementById("modalLabelSelect");
+        modalSelect.value = currentLabelId;
+        updateModalSelectStyle(modalSelect);
+
+        // 更新按鈕狀態
+        document.getElementById("modalPrevBtn").disabled = (index === 0);
+        document.getElementById("modalNextBtn").disabled = (index === triggers.length - 1);
+
+        hideMagnifier();
+        modal.classList.add("show");
+
+        // 確保圖片變更後，重設放大鏡背景
+        modalImg.onload = function () {
+            initMagnifier();
+        };
+    }
+
+    function navigateModal(direction) {
+        const triggers = document.querySelectorAll('.zoom-trigger');
+        const newIndex = currentModalIndex + direction;
+        if (newIndex >= 0 && newIndex < triggers.length) {
+            openZoomModal(null, newIndex);
+        }
+    }
+
+    function updateModalSelectStyle(selectElement) {
+        if (parseInt(selectElement.value) !== 0) {
+            selectElement.classList.add('labeled');
+        } else {
+            selectElement.classList.remove('labeled');
+        }
+    }
+
+    function updateLabelFromModal(selectElement) {
+        const labelId = parseInt(selectElement.value);
+        updateModalSelectStyle(selectElement);
+
+        // 更新背景卡片的 Select
+        const mainSelects = document.querySelectorAll('.label-card select');
+        let displayNumber = "";
+        let labelText = selectElement.options[selectElement.selectedIndex].text;
+
+        if (mainSelects[currentModalIndex]) {
+            mainSelects[currentModalIndex].value = labelId;
+            if (labelId !== 0) {
+                mainSelects[currentModalIndex].classList.add('labeled');
+            } else {
+                mainSelects[currentModalIndex].classList.remove('labeled');
+            }
+            const card = mainSelects[currentModalIndex].closest('.label-card');
+            displayNumber = card.querySelector('.card-header span').innerText;
+        }
+
+        // 發送 API
+        fetch(`/api/cetacean/${currentModalCetaceanId}/label`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ label_id: labelId })
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showToast(`${displayNumber} 更新為：${labelText}`);
+                } else {
+                    alert('標記失敗: ' + (data.error || '未知錯誤'));
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('網路錯誤');
+            });
+    }
+
+    // 鍵盤左右鍵切換
+    document.addEventListener('keydown', function (event) {
+        const modal = document.getElementById("imageZoomModal");
+        if (modal.classList.contains("show")) {
+            if (event.key === "ArrowLeft") {
+                document.getElementById("modalPrevBtn").click();
+            } else if (event.key === "ArrowRight") {
+                document.getElementById("modalNextBtn").click();
+            }
+        }
+    });
+
+    function closeZoomModal() {
+        const modal = document.getElementById("imageZoomModal");
+        modal.classList.remove("show");
+    }
+
+    function updateLabel(cetaceanId, selectElement) {
+        const labelId = parseInt(selectElement.value);
+
+        // 取得該卡片的顯示編號
+        const card = selectElement.closest('.label-card');
+        const displayNumber = card.querySelector('.card-header span').innerText;
+
+        // 取得選中的標籤名稱
+        const labelText = selectElement.options[selectElement.selectedIndex].text;
+
+        // 視覺回饋
+        if (labelId !== 0) {
+            selectElement.classList.add('labeled');
+        } else {
+            selectElement.classList.remove('labeled');
+        }
+
+        // 發送 API
+        fetch(`/api/cetacean/${cetaceanId}/label`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ label_id: labelId })
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showToast(`${displayNumber} 更新為：${labelText}`);
+                } else {
+                    alert('標記失敗: ' + (data.error || '未知錯誤'));
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('網路錯誤');
+            });
+    }
+
+    function showToast(message) {
+        const toast = document.getElementById("toast");
+        toast.innerText = message;
+        toast.className = "show";
+        setTimeout(function () { toast.className = toast.className.replace("show", ""); }, 2000);
+    }
+
+    function clearAllLabels(uploadId) {
+        if (!confirm("確定要清空這份音檔的所有標記嗎？此操作無法復原。")) return;
+        
+        fetch(`/api/upload/${uploadId}/clear_labels`, {
+            method: 'POST'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert("已成功清空所有標記！");
+                location.reload();
+            } else {
+                alert("清空失敗：" + data.error);
+            }
+        })
+        .catch(error => {
+            console.error(error);
+            alert("網路錯誤");
+        });
+    }
+</script>
+{% endblock %}
