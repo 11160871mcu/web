@@ -141,15 +141,17 @@ def training_report(run_id):
         
         # 內建預設標籤對照 (向下相容)
         DEFAULT_LABEL_MAP = {
+            0: '0. 無標籤',
             1: '1. 鯨魚 (Whale)',
-            10: '10. 上升型 (Upsweep)',
-            11: '11. 下降型 (Downsweep)',
-            12: '12. U型 (Concave)',
-            13: '13. 倒U型 (Convex)',
-            14: '14. sin型 (Sine)',
-            15: '15. 嘎搭聲 (Click)',
-            16: '16. 突發脈衝聲 (Burst)',
-            17: '17. 常數型 (Constant)',
+            10: '10. 未知聲紋 (Unknown Vocalization)',
+            11: '11. 上升型 (Upsweep)',
+            12: '12. 下降型 (Downsweep)',
+            13: '13. U型 (Concave)',
+            14: '14. 倒U型 (Convex)',
+            15: '15. sin型 (Sine)',
+            16: '16. 嘎搭聲 (Click)',
+            17: '17. 突發脈衝聲 (Burst)',
+            18: '18. 常數型 (Constant)',
             90: '90. 環境噪音 (Noise)',
             91: '91. 船舶 (Ship)',
             92: '92. 風機打樁 (Piling)'

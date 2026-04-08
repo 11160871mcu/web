@@ -125,8 +125,8 @@ class CnnTrainer:
             train_dataset = datasets.ImageFolder(os.path.join(dataset_dir, 'train'), transform=transform)
             val_dataset = datasets.ImageFolder(os.path.join(dataset_dir, 'val'), transform=transform)
             
-            train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
-            val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
+            train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
+            val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
             
             num_classes = len(train_dataset.classes)
             class_names = train_dataset.classes
@@ -152,9 +152,20 @@ class CnnTrainer:
                     self.reduction = reduction
 
                 def forward(self, inputs, targets):
-                    ce_loss = F.cross_entropy(inputs, targets, reduction='none', weight=self.alpha)
+                    # 1. 取得沒有 class weight 的原始 CE loss
+                    ce_loss = F.cross_entropy(inputs, targets, reduction='none')
+                    
+                    # 2. 計算 pt (此時 pt 是正確的介於 0~1 的機率值)
                     pt = torch.exp(-ce_loss)
+                    
+                    # 3. 計算 Focal Loss 基礎
                     focal_loss = ((1 - pt) ** self.gamma) * ce_loss
+                    
+                    # 4. 手動乘上類別權重 alpha
+                    if self.alpha is not None:
+                        alpha_t = self.alpha[targets]
+                        focal_loss = focal_loss * alpha_t
+                        
                     if self.reduction == 'mean':
                         return focal_loss.mean()
                     elif self.reduction == 'sum':
@@ -171,11 +182,24 @@ class CnnTrainer:
                 def forward(self, inputs, targets):
                     num_classes = inputs.size(1)
                     targets_one_hot = F.one_hot(targets, num_classes=num_classes).float()
+                    
+                    # 1. 取得沒有 weights 的原始 BCE loss
                     bce_loss = F.binary_cross_entropy_with_logits(
-                        inputs, targets_one_hot, reduction='none', pos_weight=self.alpha
+                        inputs, targets_one_hot, reduction='none'
                     )
+                    
+                    # 2. 計算 pt (此時 pt 是正確的介於 0~1 的機率值)
                     pt = torch.exp(-bce_loss)
+                    
+                    # 3. 計算 Focal Loss 基礎
                     focal_loss = ((1 - pt) ** self.gamma) * bce_loss
+                    
+                    # 4. 手動乘上類別權重 alpha
+                    if self.alpha is not None:
+                        # 將 alpha 擴展為 (1, num_classes) 並廣播乘到 focal_loss (batch_size, num_classes) 上
+                        alpha_expanded = self.alpha.unsqueeze(0).expand_as(focal_loss)
+                        focal_loss = focal_loss * alpha_expanded
+                        
                     if self.reduction == 'mean':
                         return focal_loss.mean()
                     elif self.reduction == 'sum':

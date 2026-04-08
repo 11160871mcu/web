@@ -127,6 +127,18 @@ cursor: zoom-in;
 transform: scale(1.03);
 box-shadow: 0 10px 20px rgba(0,0,0,0.1);
 }
+
+@media print {
+    body { background: white !important; }
+    .container-card { box-shadow: none !important; margin: 0 !important; padding: 0 !important; border: none !important; }
+    .btn, .action-buttons, header, nav, .sidebar { display: none !important; }
+    .chart-box { break-inside: avoid; }
+    details { display: block !important; margin-bottom: 2rem !important; }
+    details > summary { display: none !important; }
+    details .details-content { display: block !important; border: none !important; }
+    .section-title { page-break-after: avoid; }
+    .metrics-grid, .params-grid, .chart-grid { page-break-inside: avoid; }
+}
 {% endblock %}
 
 {% block content %}
@@ -151,7 +163,10 @@ box-shadow: 0 10px 20px rgba(0,0,0,0.1);
                 {% endif %}
             </div>
         </div>
-        <div style="display: flex; gap: 0.75rem;">
+        <div class="action-buttons" style="display: flex; gap: 0.75rem; align-items: center;">
+            <button onclick="window.print()" class="btn btn-primary" style="background: #10b981; border-color: #10b981;">
+                <i class="fas fa-file-pdf"></i> 匯出報告 (PDF)
+            </button>
             <a href="{{ url_for('static', filename=run.results_path + '/weights/best.pt') }}" class="btn btn-primary"
                 download>
                 下載最佳模型
@@ -218,57 +233,61 @@ box-shadow: 0 10px 20px rgba(0,0,0,0.1);
     </div>
 
     <!-- 訓練音檔列表 -->
-    <h3 class="section-title">訓練使用音檔 
-        <span style="font-size: 0.9rem; color: var(--text-light); font-weight: normal; margin-left: 8px;">(共 {{ used_audios|length }} 筆)</span>
-    </h3>
-    <div style="background: white; border-radius: 12px; border: 1px solid #e2e8f0; overflow: hidden; margin-bottom: 2rem;">
-        {% if used_audios %}
-        <table class="data-table" style="margin: 0; box-shadow: none;">
-            <thead>
-                <tr style="background: #f8fafc;">
-                    <th style="padding-left: 1.5rem;">音檔名稱</th>
-                    <th>錄製長度</th>
-                    <th>標記分佈</th>
-                    <th style="text-align: right; padding-right: 1.5rem;">操作</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for audio in used_audios %}
-                <tr style="border-bottom: 1px solid #f1f5f9;">
-                    <td style="padding-left: 1.5rem; font-weight: 500;">
-                        {{ audio.file_name }}
-                    </td>
-                    <td style="color: var(--text-light);">
-                        {{ "%.1f"|format(audio.calculated_duration) if audio.calculated_duration is not none else '--' }} 秒
-                    </td>
-                    <td>
-                        {% if audio.label_counts %}
-                            <div style="display: flex; gap: 4px; flex-wrap: wrap;">
-                            {% for label_name, count in audio.label_counts.items() %}
-                                <span style="background: #e2e8f0; color: #475569; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; font-weight: 500;">
-                                    {{ label_name }}: {{ count }}
-                                </span>
-                            {% endfor %}
-                            </div>
-                        {% else %}
-                            <span style="color: #94a3b8; font-size: 0.85rem;">無標記</span>
-                        {% endif %}
-                    </td>
-                    <td style="text-align: right; padding-right: 1.5rem;">
-                        <a href="{{ url_for('main.results', upload_id=audio.id) }}" class="btn btn-secondary" style="padding: 4px 10px; font-size: 0.85rem;" target="_blank">
-                            查看分析 &rarr;
-                        </a>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        {% else %}
-        <div style="padding: 2rem; text-align: center; color: #94a3b8;">
-            無音檔關聯紀錄或非透過上傳音檔發起的訓練。
+    <details style="margin-bottom: 2rem; background: transparent; border-radius: 12px;">
+        <summary class="section-title" style="cursor: pointer; display: flex; align-items: center; user-select: none; margin: 1rem 0; list-style: none; /* 隱藏預設箭頭 */">
+            訓練使用音檔 
+            <span style="font-size: 0.9rem; color: var(--text-light); font-weight: normal; margin-left: 8px;">(共 {{ used_audios|length }} 筆)</span>
+            <span style="margin-left: auto; font-size: 0.9rem; color: var(--primary-med); background: #e0f2fe; padding: 4px 10px; border-radius: 6px;">點擊展開 / 收合</span>
+        </summary>
+        <div class="details-content" style="background: white; border-radius: 12px; border: 1px solid #e2e8f0; overflow: hidden; margin-top: 1rem;">
+            {% if used_audios %}
+            <table class="data-table" style="margin: 0; box-shadow: none;">
+                <thead>
+                    <tr style="background: #f8fafc;">
+                        <th style="padding-left: 1.5rem;">音檔名稱</th>
+                        <th>錄製長度</th>
+                        <th>標記分佈</th>
+                        <th class="action-buttons" style="text-align: right; padding-right: 1.5rem;">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for audio in used_audios %}
+                    <tr style="border-bottom: 1px solid #f1f5f9;">
+                        <td style="padding-left: 1.5rem; font-weight: 500;">
+                            {{ audio.file_name }}
+                        </td>
+                        <td style="color: var(--text-light);">
+                            {{ "%.1f"|format(audio.calculated_duration) if audio.calculated_duration is not none else '--' }} 秒
+                        </td>
+                        <td>
+                            {% if audio.label_counts %}
+                                <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+                                {% for label_name, count in audio.label_counts.items() %}
+                                    <span style="background: #e2e8f0; color: #475569; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; font-weight: 500;">
+                                        {{ label_name }}: {{ count }}
+                                    </span>
+                                {% endfor %}
+                                </div>
+                            {% else %}
+                                <span style="color: #94a3b8; font-size: 0.85rem;">無標記</span>
+                            {% endif %}
+                        </td>
+                        <td class="action-buttons" style="text-align: right; padding-right: 1.5rem;">
+                            <a href="{{ url_for('main.results', upload_id=audio.id) }}" class="btn btn-secondary" style="padding: 4px 10px; font-size: 0.85rem;" target="_blank">
+                                查看分析 &rarr;
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div style="padding: 2rem; text-align: center; color: #94a3b8;">
+                無音檔關聯紀錄或非透過上傳音檔發起的訓練。
+            </div>
+            {% endif %}
         </div>
-        {% endif %}
-    </div>
+    </details>
 
     <!-- 總體評估指標 -->
     <h3 class="section-title">總體評估指標</h3>
