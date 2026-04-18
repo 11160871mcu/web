@@ -22,6 +22,17 @@ def start_training():
         'loss_function': request.form.get('loss_function', 'cross_entropy')
     }
     
+    # 進階設定：收集訓練標籤與限制筆數
+    train_labels = request.form.getlist('train_labels')
+    label_sampling = {}
+    if train_labels:
+        for lbl_id in train_labels:
+            count = request.form.get(f'train_counts_{lbl_id}')
+            if count and count.isdigit():
+                label_sampling[str(lbl_id)] = int(count)
+    if label_sampling:
+        train_params['label_sampling'] = label_sampling
+    
     if upload_ids:
         # 儲存參數到資料庫
         params = {
@@ -68,6 +79,76 @@ def delete_selected_runs():
         db.session.delete(run)
     db.session.commit()
     return redirect(url_for('main.training_status'))
+
+@main_bp.route('/api/training/label_stats', methods=['POST'])
+def api_label_stats():
+    """統計指定 upload_ids 下的標籤與數量，若含有 event_type=0 則阻擋"""
+    data = request.get_json()
+    if not data or 'upload_ids' not in data:
+        return jsonify({'success': False, 'error': '未提供 upload_ids'})
+    
+    upload_ids = data['upload_ids']
+    
+    from flask import jsonify
+    from ..models import AudioInfo, CetaceanInfo, Label
+    # 找出所有相關音檔
+    audios = AudioInfo.query.filter(AudioInfo.id.in_(upload_ids)).all()
+    if not audios:
+        return jsonify({'success': False, 'error': '找不到指定的音檔'})
+        
+    invalid_filenames = []
+    # 檢查是否有 event_type == 0 的標籤
+    for audio in audios:
+        has_unlabeled = CetaceanInfo.query.filter_by(audio_id=audio.id, event_type=0).first()
+        if has_unlabeled:
+            invalid_filenames.append(audio.file_name)
+            
+    if invalid_filenames:
+        return jsonify({
+            'success': False, 
+            'error': f'以下音檔含有未分類（無標籤）的切片，不能作為訓練資料使用：\n{chr(10).join(invalid_filenames)}'
+        })
+        
+    # 若全部皆合法，則開始統計
+    all_cetaceans = CetaceanInfo.query.filter(CetaceanInfo.audio_id.in_(upload_ids)).all()
+    
+    counts_id = {}
+    for c in all_cetaceans:
+        if c.event_type != 0:
+            counts_id[c.event_type] = counts_id.get(c.event_type, 0) + 1
+            
+    labels = Label.query.all()
+    label_map = {l.id: l.name for l in labels}
+    
+    DEFAULT_LABEL_MAP = {
+        1: '1. 鯨魚 (Whale)',
+        10: '10. 未知聲紋 (Unknown Vocalization)',
+        11: '11. 上升型 (Upsweep)',
+        12: '12. 下降型 (Downsweep)',
+        13: '13. U型 (Concave)',
+        14: '14. 倒U型 (Convex)',
+        15: '15. sin型 (Sine)',
+        16: '16. 嘎搭聲 (Click)',
+        17: '17. 突發脈衝聲 (Burst)',
+        18: '18. 常數型 (Constant)',
+        90: '90. 環境噪音 (Noise)',
+        91: '91. 船舶 (Ship)',
+        92: '92. 風機打樁 (Piling)'
+    }
+    
+    stats_list = []
+    for eid in sorted(counts_id.keys()):
+        label_name = label_map.get(eid)
+        if not label_name:
+            label_name = DEFAULT_LABEL_MAP.get(eid, str(eid))
+            
+        stats_list.append({
+            'label_id': eid,
+            'label_name': label_name,
+            'count': counts_id[eid]
+        })
+        
+    return jsonify({'success': True, 'stats': stats_list})
 
 @main_bp.route('/training/status')
 def training_status():
@@ -158,6 +239,8 @@ def training_report(run_id):
         }
         
         total_label_counts_id = {}
+        label_sampling = params.get('label_sampling')
+        
         for audio in used_audios:
             # 計算如果 record_duration 為 None，就用 params 推算
             if audio.record_duration is None:
@@ -179,6 +262,8 @@ def training_report(run_id):
             # 使用 ID 統計與排序
             counts_id = {}
             for c in cetaceans:
+                if label_sampling is not None and str(c.event_type) not in label_sampling:
+                    continue # 如果使用者未勾選此類別，則排除
                 counts_id[c.event_type] = counts_id.get(c.event_type, 0) + 1
                 total_label_counts_id[c.event_type] = total_label_counts_id.get(c.event_type, 0) + 1
             
@@ -191,13 +276,20 @@ def training_report(run_id):
             
             audio.label_counts = sorted_counts
             
-        # 計算匯總的標籤分布
+        # 計算匯總的標籤分布，套用上限
         sorted_total_counts = {}
         for eid in sorted(total_label_counts_id.keys()):
             label_name = label_map.get(eid)
             if not label_name:
                 label_name = DEFAULT_LABEL_MAP.get(eid, str(eid))
-            sorted_total_counts[label_name] = total_label_counts_id[eid]
+                
+            actual_count = total_label_counts_id[eid]
+            if label_sampling is not None and str(eid) in label_sampling:
+                limit = label_sampling[str(eid)]
+                if actual_count > limit:
+                    actual_count = limit
+                    
+            sorted_total_counts[label_name] = actual_count
     
     return render_template(
         'training_report.html', 

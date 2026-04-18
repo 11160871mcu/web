@@ -1,60 +1,14 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
+.git
+.gitignore
+__pycache__
+*.pyc
+*.pyo
+*.pyd
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# Virtual environments
-.env
+env
+venv
 .venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# Flask
-instance/
-.webassets-cache
-
-# Database
-*.db
-*.sqlite
-*.sqlite3
-
-# Logs
-*.log
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Uploads and temporary files
-static/uploads/
-static/temp/
-static/temp_models/
-
-# Results
-static/results/
+app/static/uploads
+app/static/results
+app/static/training_runs
+mysql_data

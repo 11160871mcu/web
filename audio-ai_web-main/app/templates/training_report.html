@@ -212,6 +212,8 @@ box-shadow: 0 10px 20px rgba(0,0,0,0.1);
                     Binary Focal
                 {% elif params.get('use_focal_loss') %}
                     Focal Loss (舊版)
+                {% elif params.get('loss_function') == 'none' %}
+                    Cross Entropy (標準 / 預設)
                 {% else %}
                     Cross Entropy
                 {% endif %}

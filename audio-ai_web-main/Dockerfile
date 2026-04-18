@@ -8,7 +8,10 @@ WORKDIR /code
 
 # 安裝系統依賴
 # 新增 ffmpeg 以支援更多音訊格式
-RUN apt-get update && apt-get install -y \
+# 遇到 400 Bad Request 錯誤，將 Ubuntu 伺服器切換至台灣節點
+RUN sed -i 's/archive.ubuntu.com/tw.archive.ubuntu.com/g' /etc/apt/sources.list.d/debian.sources || true && \
+    sed -i 's/deb.debian.org/tw.archive.ubuntu.com/g' /etc/apt/sources.list || true && \
+    apt-get update && apt-get install -y \
     libgl1 \
     libglib2.0-0 \
     libsndfile1 \

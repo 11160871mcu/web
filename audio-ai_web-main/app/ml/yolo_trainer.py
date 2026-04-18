@@ -67,10 +67,15 @@ class YoloTrainer:
 
             # 準備 Label Mapping (ID -> Name)
             label_map = {l.id: l.name for l in Label.query.all()}
+            
+            label_sampling = train_params.get('label_sampling', None)
 
             data_by_label = defaultdict(list)
             
             for cetacean in labeled_cetaceans:
+                if label_sampling is not None and str(cetacean.event_type) not in label_sampling:
+                    continue # 跳過未選擇的標籤
+                    
                 aid = cetacean.audio_id
                 try:
                     # 找出此 cetacean 在其 audio 序列中的 index
@@ -83,15 +88,22 @@ class YoloTrainer:
                         # 優先使用 Label 表的名稱，若無則使用 ID
                         label_name = label_map.get(cetacean.event_type, str(cetacean.event_type))
                         
-                        data_by_label[label_name].append(result_item)
+                        data_by_label[(cetacean.event_type, label_name)].append(result_item)
                 except (ValueError, IndexError):
                     continue
 
             total_val_images = 0
             
             # 建立資料集 (複製圖檔)
-            for label_name, items in data_by_label.items():
+            for (lbl_id, label_name), items in data_by_label.items():
                 random.shuffle(items)
+                
+                # 套用抽樣數量限制
+                if label_sampling is not None and str(lbl_id) in label_sampling:
+                    limit = label_sampling[str(lbl_id)]
+                    if len(items) > limit:
+                        items = random.sample(items, limit)
+                
                 if len(items) < 2:
                     train_items, val_items = items, []
                 else:

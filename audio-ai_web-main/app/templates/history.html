@@ -81,8 +81,43 @@
 
         <div style="margin-top: 2rem; display: flex; justify-content: flex-end; gap: 1rem;">
             <button type="button" class="btn btn-secondary" onclick="openImportModal()">匯入 Excel 標記</button>
+            <button type="button" class="btn" style="background: #0ea5e9; color: white;" onclick="openExportModal()">匯出訓練資料集</button>
             <button type="button" class="btn" style="background: #20c997; color: white;" onclick="openTrainingModal()">啟動模型訓練</button>
             <button type="button" class="btn btn-danger" onclick="submitDeletion()">刪除選取項目</button>
+        </div>
+
+        <div id="export-modal" class="modal-overlay">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>📥 匯出資料集設定</h2>
+                    <button type="button" class="modal-close" onclick="closeExportModal()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p style="margin-bottom: 1rem; color: #64748b;">請選擇您要包含在壓縮檔內的資料類型：</p>
+                    <div class="form-group" style="display: flex; flex-direction: column; gap: 0.8rem;">
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                            <input type="checkbox" name="export_options" value="images" checked>
+                            <strong>頻譜圖切片</strong> (AI 視覺辨識訓練用圖片)
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                            <input type="checkbox" name="export_options" value="audio" checked>
+                            <strong>音檔切片</strong> (原始切割後的 .wav 音檔片段)
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                            <input type="checkbox" name="export_options" value="csv" checked>
+                            <strong>整體標記資料</strong> (labels.csv - 包含每張切片的分類標籤)
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                            <input type="checkbox" name="export_options" value="bbox" checked>
+                            <strong>進階框選資料</strong> (bbox_annotations.csv - 包含框選座標與頻率範圍)
+                        </label>
+                    </div>
+                </div>
+                <div class="modal-footer" style="margin-top: 1.5rem;">
+                    <button type="button" class="btn btn-secondary" onclick="closeExportModal()">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="confirmExport()">確認匯出</button>
+                </div>
+            </div>
         </div>
     </form>
 
@@ -159,6 +194,15 @@
                             </div>
                         </div>
                     </div>
+
+                    <div class="form-group" style="margin-top: 1.5rem;" id="label-settings-group">
+                        <label style="font-weight: 600; margin-bottom: 0.75rem; display: flex; justify-content: space-between; align-items: center;">
+                            <span>訓練標籤與抽樣筆數 (進階)</span>
+                            <span style="font-size: 0.85rem; font-weight: normal; color: #64748b;" id="loading-stats">處理中...</span>
+                        </label>
+                        <div id="label-settings-container" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 1rem; max-height: 250px; overflow-y: auto;">
+                            </div>
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" onclick="closeTrainingModal()">取消</button>
@@ -177,12 +221,13 @@
             <form id="import-config-form" onsubmit="submitImportExcel(event)">
                 <div class="modal-body">
                     <p style="color: #666; margin-bottom: 1rem; font-size: 0.9rem;">
-                        💡 系統將自動讀取 Excel 中的 <b>label</b> 欄位進行分類。請確保標題包含：<br>
-                        <code>start_time</code>, <code>end_time</code>, <code>label</code>, <code>filename</code>
+                        💡 系統將自動依照 Excel 中由上到下的順序對應切片。<br>
+                        遇到標記為空白的儲存格將自動跳過不處理。<br>
+                        請確保標題包含：<code>label</code>, <code>filename</code>
                     </p>
                     <div class="form-group">
                         <label for="excelModalUploadInput" style="font-weight: 600; margin-bottom: 0.75rem; display: block;">選擇 Excel 檔案 (可多選)</label>
-                        <input type="file" id="excelModalUploadInput" multiple accept=".xlsx, .xls" style="width: 100%;" required />
+                        <input type="file" id="excelModalUploadInput" multiple accept=".xlsx, .xls, .csv" style="width: 100%;" required />
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -194,29 +239,220 @@
     </div>
 </div>
 
-<div id="data-config" data-new-upload-id="{{ request.args.get('new_upload_id') }}"></div>
-
 <script>
-    // --- 通用功能 ---
+    // ==========================================
+    // 1. Shift 區間選取與左鍵拖曳框選功能
+    // ==========================================
+    let lastChecked = null;
+    let isSelecting = false;
+    let currentSelection = null;
+    let startPageX, startPageY;
+    let lastClientX, lastClientY;
+    let scrollInterval = null;
+
+    document.addEventListener('DOMContentLoaded', function() {
+        const checkboxes = document.querySelectorAll('.upload-checkbox');
+        checkboxes.forEach(cb => {
+            cb.addEventListener('click', handleCheckboxClick);
+        });
+    });
+
+    function handleCheckboxClick(e) {
+        const checkboxes = Array.from(document.querySelectorAll('.upload-checkbox'));
+        if (!lastChecked) {
+            lastChecked = this;
+            return;
+        }
+        if (e.shiftKey) {
+            let start = checkboxes.indexOf(this);
+            let end = checkboxes.indexOf(lastChecked);
+            checkboxes.slice(Math.min(start, end), Math.max(start, end) + 1)
+                      .forEach(cb => cb.checked = this.checked);
+        }
+        lastChecked = this;
+    }
+
+    function handleAutoScroll() {
+        if (!isSelecting) return;
+        const threshold = 50;
+        const maxSpeed = 15;
+        let speed = 0;
+
+        if (lastClientY < threshold) {
+            speed = -Math.min(maxSpeed, (threshold - lastClientY) / 2);
+        } else if (lastClientY > window.innerHeight - threshold) {
+            speed = Math.min(maxSpeed, (lastClientY - (window.innerHeight - threshold)) / 2);
+        }
+
+        if (speed !== 0) {
+            window.scrollBy(0, speed);
+            updateSelectionBox();
+            requestAnimationFrame(handleAutoScroll);
+        } else {
+            scrollInterval = null;
+        }
+    }
+
+    function updateSelectionBox() {
+        if (!currentSelection) return;
+        const currentPageX = lastClientX + window.scrollX;
+        const currentPageY = lastClientY + window.scrollY;
+
+        const left = Math.min(startPageX, currentPageX);
+        const top = Math.min(startPageY, currentPageY);
+        const width = Math.abs(startPageX - currentPageX);
+        const height = Math.abs(startPageY - currentPageY);
+
+        currentSelection.style.left = (left - window.scrollX) + 'px';
+        currentSelection.style.top = (top - window.scrollY) + 'px';
+        currentSelection.style.width = width + 'px';
+        currentSelection.style.height = height + 'px';
+    }
+
+    document.addEventListener('mousedown', function(e) {
+        if (e.target.closest('.upload-checkbox') || e.target.closest('.btn') || e.target.tagName === 'A') return;
+        if (e.button !== 0) return; // 僅限左鍵
+
+        isSelecting = true;
+        startPageX = e.pageX;
+        startPageY = e.pageY;
+        lastClientX = e.clientX;
+        lastClientY = e.clientY;
+
+        currentSelection = document.createElement('div');
+        currentSelection.id = 'drag-selector';
+        currentSelection.style.cssText = `
+            position: fixed; border: 2px dashed #007bff; background: rgba(0, 123, 255, 0.1);
+            pointer-events: none; z-index: 9999; box-sizing: border-box;
+        `;
+        document.body.appendChild(currentSelection);
+        document.body.style.userSelect = 'none';
+    });
+
+    document.addEventListener('mousemove', function(e) {
+        if (!isSelecting) return;
+        lastClientX = e.clientX;
+        lastClientY = e.clientY;
+        updateSelectionBox();
+        if (!scrollInterval) scrollInterval = requestAnimationFrame(handleAutoScroll);
+    });
+
+    document.addEventListener('mouseup', function() {
+        if (!isSelecting) return;
+        isSelecting = false;
+        document.body.style.userSelect = '';
+
+        if (currentSelection) {
+            const rect = currentSelection.getBoundingClientRect();
+            document.querySelectorAll('.upload-checkbox').forEach(cb => {
+                const cbRect = cb.getBoundingClientRect();
+                const centerX = (cbRect.left + cbRect.right) / 2;
+                const centerY = (cbRect.top + cbRect.bottom) / 2;
+                if (centerX >= rect.left && centerX <= rect.right &&
+                    centerY >= rect.top && centerY <= rect.bottom) {
+                    cb.checked = true;
+                }
+            });
+            currentSelection.remove();
+            currentSelection = null;
+        }
+    });
+
+    // ==========================================
+    // 2. 基礎按鈕功能 (全選、刪除、匯出)
+    // ==========================================
     function toggleAll(source) {
-        const checkboxes = document.getElementsByClassName('upload-checkbox');
-        for (let i = 0; i < checkboxes.length; i++) checkboxes[i].checked = source.checked;
+        document.querySelectorAll('.upload-checkbox').forEach(cb => cb.checked = source.checked);
     }
 
     function getSelectedIds() {
         return Array.from(document.querySelectorAll('.upload-checkbox:checked')).map(cb => cb.value);
     }
 
-    // --- 訓練彈窗控制 ---
-    function openTrainingModal() {
+    function submitDeletion() {
+        const ids = getSelectedIds();
+        if (ids.length === 0) return;
+        if (confirm(`確定刪除這 ${ids.length} 個項目嗎？`)) {
+            const form = document.getElementById('history-form');
+            form.action = "{{ url_for('main.delete_selected_uploads') }}";
+            form.submit();
+        }
+    }
+
+    // 新增：匯出資料集控制
+    function openExportModal() {
+        const selectedIds = getSelectedIds();
+        if (selectedIds.length === 0) { alert('請至少選取一個項目進行匯出。'); return; }
+        document.getElementById('export-modal').classList.add('active');
+    }
+
+    function closeExportModal() {
+        document.getElementById('export-modal').classList.remove('active');
+    }
+
+    function confirmExport() {
+        const form = document.getElementById('history-form');
+        // ====== 這裡已經修正為新的路由名稱！ ======
+        form.action = "{{ url_for('main.batch_download_zip') }}";
+        form.submit();
+        closeExportModal();
+    }
+
+    // ==========================================
+    // 3. 模型訓練 Modal 控制
+    // ==========================================
+    async function openTrainingModal() {
         const selectedIds = getSelectedIds();
         if (selectedIds.length === 0) { alert('請至少選取一個項目進行訓練。'); return; }
         
         const container = document.getElementById('hidden-upload-ids');
         container.innerHTML = selectedIds.map(id => `<input type="hidden" name="upload_ids" value="${id}">`).join('');
         
+        // 新增：動態抓取標籤資料
+        try {
+            const resp = await fetch('/api/training/label_stats', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ upload_ids: selectedIds })
+            });
+            const data = await resp.json();
+            
+            const labelContainer = document.getElementById('label-settings-container');
+            const loadingStats = document.getElementById('loading-stats');
+
+            if (!data.success) {
+                loadingStats.textContent = '讀取失敗';
+                labelContainer.innerHTML = `<div style="color: red; text-align: center;">${data.error}</div>`;
+            } else if (data.stats && data.stats.length > 0) {
+                loadingStats.textContent = `共 ${data.stats.length} 個標籤`;
+                let html = '<div style="display: grid; gap: 0.8rem;">';
+                data.stats.forEach(stat => {
+                    html += `
+                        <div style="display: flex; align-items: center; justify-content: space-between; background: white; padding: 0.5rem 0.8rem; border-radius: 6px; border: 1px solid #e2e8f0;">
+                            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; flex: 1;">
+                                <input type="checkbox" name="train_labels" value="${stat.label_id}" checked>
+                                <span style="font-weight: 500;">${stat.label_name}</span>
+                                <span style="color: #64748b; font-size: 0.85rem;">(總數: ${stat.count})</span>
+                            </label>
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <span style="font-size: 0.85rem; color: #64748b;">抽樣筆數:</span>
+                                <input type="number" name="train_counts_${stat.label_id}" value="${stat.count}" min="1" max="${stat.count}" style="width: 80px; padding: 0.2rem 0.5rem; border-radius: 4px; border: 1px solid #cbd5e1;" required>
+                            </div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+                labelContainer.innerHTML = html;
+            } else {
+                loadingStats.textContent = '無可用標籤';
+                labelContainer.innerHTML = '<div style="color: #64748b; text-align: center;">此音檔無已標記的切片</div>';
+            }
+        } catch (e) {
+            console.error('Failed to fetch label stats:', e);
+            document.getElementById('loading-stats').textContent = '讀取異常';
+        }
+
         document.getElementById('training-modal').classList.add('active');
-        // 初始化模型勾選狀態
         const selectedOption = document.querySelector('.model-option.selected');
         if(selectedOption) selectModel(selectedOption);
     }
@@ -236,7 +472,6 @@
             const chkMulti = document.getElementById('chk_focal_multi');
 
             if (isYolo) {
-                // YOLO 不支援自訂 Focal Loss UI
                 if(chkBinary) { chkBinary.disabled = true; chkBinary.checked = false; }
                 if(chkMulti) { chkMulti.disabled = true; chkMulti.checked = false; }
                 document.getElementById('hidden_loss_function').value = 'cross_entropy';
@@ -244,7 +479,6 @@
                 lossGroup.style.opacity = '0.5';
                 lossGroup.style.pointerEvents = 'none';
             } else {
-                // CNN 模型開啟設定
                 if(chkBinary) chkBinary.disabled = false;
                 if(chkMulti) chkMulti.disabled = false;
                 lossGroup.style.opacity = '1';
@@ -275,7 +509,9 @@
         }
     }
 
-    // --- Excel 匯入 (自動讀取版) ---
+    // ==========================================
+    // 4. Excel 匯入 Modal 控制
+    // ==========================================
     function openImportModal() { document.getElementById('import-modal').classList.add('active'); }
     function closeImportModal() { document.getElementById('import-modal').classList.remove('active'); }
 
@@ -295,7 +531,7 @@
             const response = await fetch('/api/import_excel', { method: 'POST', body: formData });
             const data = await response.json();
             if (response.ok) {
-                alert(`成功處理 ${data.success_count} 個檔案，共新增 ${data.total_labels} 個標記。`);
+                alert(`成功處理 ${data.success_count} 個有效標記，共更新 ${data.db_updated} 個資料庫切片。`);
                 location.reload();
             } else {
                 alert(`匯入失敗: ${data.error}`);
@@ -305,17 +541,6 @@
         } finally {
             btn.innerText = '開始匯入';
             btn.disabled = false;
-        }
-    }
-
-    // --- 刪除邏輯 ---
-    function submitDeletion() {
-        const selectedIds = getSelectedIds();
-        if (selectedIds.length === 0) return;
-        if (confirm(`確定要刪除選取的 ${selectedIds.length} 個項目嗎？`)) {
-            const form = document.getElementById('history-form');
-            form.action = "{{ url_for('main.delete_selected_uploads') }}";
-            form.submit();
         }
     }
 </script>
@@ -339,5 +564,12 @@
     .model-option input { display: none; }
     .model-option-header { font-weight: bold; margin-bottom: 0.25rem; }
     .model-option-desc { font-size: 0.85rem; color: #666; }
+
+    /* 選取框與游標樣式 */
+    body { cursor: default; }
+    body:has(#drag-selector) { cursor: crosshair; }
+    .data-table tr { transition: background 0.2s; }
+    .data-table tr:hover { background: #f8fafc; }
+    .upload-checkbox { cursor: pointer; transform: scale(1.2); }
 </style>
 {% endblock %}
