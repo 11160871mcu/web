@@ -1,9 +1,10 @@
 import os
 import json
 import shutil
-import pandas as pd
+import re
 from flask import request, redirect, url_for, current_app, jsonify
 from werkzeug.utils import secure_filename
+import pandas as pd
 from ..main_router import main_bp
 from .. import db, celery
 from ..models import AudioInfo, PointInfo, CetaceanInfo
@@ -14,7 +15,6 @@ def upload():
     files = request.files.getlist('files')
     if not files or all(f.filename == '' for f in files):
         return redirect(url_for('main.index'))
-
     try:
         params_dict = {
             'spec_type': request.form['spec_type'],
@@ -33,17 +33,16 @@ def upload():
     except Exception as e:
         print(f"上傳參數解析錯誤: {e}")
         return "參數錯誤", 400
-
+        
     params_json = json.dumps(params_dict)
     default_point = PointInfo.query.first()
     point_id = default_point.id if default_point else None
-
     uploaded_ids = []
+    
     for file in files:
         if file and file.filename != '':
             filename = secure_filename(file.filename)
             file_ext = os.path.splitext(filename)[1].lower().replace('.', '')
-            
             new_audio = AudioInfo(
                 file_name=filename,
                 file_path="pending",
@@ -60,18 +59,17 @@ def upload():
             result_dir_relative = os.path.join('results', str(upload_id))
             result_dir_absolute = os.path.join(current_app.root_path, 'static', result_dir_relative)
             os.makedirs(result_dir_absolute, exist_ok=True)
-
+            
             upload_filename = f"{upload_id}_{filename}"
             upload_path_absolute = os.path.join(current_app.root_path, current_app.config['UPLOAD_FOLDER'], upload_filename)
             file.save(upload_path_absolute)
-
+            
             new_audio.file_path = upload_path_absolute
             new_audio.result_path = result_dir_relative
             db.session.commit()
-
             celery.send_task('app.tasks.process_audio_task', args=[upload_id])
             uploaded_ids.append(upload_id)
-
+            
     if uploaded_ids:
         return redirect(url_for('main.history', new_upload_id=uploaded_ids[0]))
     return redirect(url_for('main.index'))
@@ -82,7 +80,6 @@ def delete_selected_uploads():
     upload_ids = request.form.getlist('upload_ids')
     if not upload_ids:
         return redirect(url_for('main.history'))
-
     uploads = AudioInfo.query.filter(AudioInfo.id.in_(upload_ids)).all()
     for u in uploads:
         path = os.path.join(current_app.root_path, 'static', u.result_path)
@@ -96,18 +93,13 @@ def delete_selected_uploads():
 
 @main_bp.route('/api/import_excel', methods=['POST'])
 def import_excel():
-    """ 
-    匯入 Excel/CSV 標記資料 (終極完美版 - 完整檔名精確比對)
-    邏輯：
-    1. 支援 .xlsx, .xls, .csv 檔案。
-    2. 針對資料庫檔名，精準剝離前兩個底線 (例如 5_5_)，拿剩下的真實檔名去配對。
-    3. 空白、NaN 或 0 直接跳過，不改動資料庫。
-    4. 加入嚴格的 try-except 防卡死回傳機制。
-    """
+    """ 匯入 Excel 標記資料 (Emily 專用：精準時間合併版) """
+    import re
     files = request.files.getlist('files')
     if not files:
-        return jsonify({'success': False, 'error': '沒有選擇檔案'}), 400
+        return jsonify({'error': '沒有選擇檔案'}), 400
 
+    # --- 1. 標籤對照表 (請根據你的系統調整數字) ---
     LABEL_TO_EVENT_TYPE = {
         'whale': 1, 'unknown': 0,
         'whale_upsweep': 10, 'whale_downsweep': 11, 'whale_concave': 12,
@@ -116,11 +108,12 @@ def import_excel():
         'noise': 90, 'ship': 91, 'piling': 92
     }
 
+    # --- 2. 優先權函數 (防止互蓋) ---
     def get_priority(etype):
         if etype is None: return 999
-        if 1 <= etype <= 17: return 1  
-        if etype == 0: return 2        
-        if etype >= 90: return 10      
+        if 1 <= etype <= 17: return 1  # 鯨豚最優先
+        if etype == 0: return 2        # unknown 次之
+        if etype >= 90: return 10      # 噪音最後
         return 5
 
     excel_rows_success = 0
@@ -128,108 +121,100 @@ def import_excel():
     errors = []
 
     for file in files:
-        # 1. 支援讀取 CSV 與 Excel
-        try:
-            if file.filename.endswith('.csv'):
-                df = pd.read_csv(file)
-            elif file.filename.endswith(('.xlsx', '.xls')):
-                df = pd.read_excel(file)
-            else:
-                continue 
-        except Exception as e:
-            errors.append(f"讀取檔案失敗 {file.filename}: {str(e)}")
+        if not file.filename.endswith(('.xlsx', '.xls')):
             continue
 
         try:
+            df = pd.read_excel(file)
+            # 確保欄位名稱正確 (A~D 對應到 start_time, end_time, label, filename)
             df.columns = [str(c).strip().lower() for c in df.columns]
             
-            if 'filename' not in df.columns:
-                return jsonify({'success': False, 'error': f"檔案 {file.filename} 缺少 filename 欄位"}), 400
+            pending_updates = {} # 暫存所有要更新的標籤
+            touched_audio_ids = set() # 記錄這次改了哪些音檔
 
-            pending_updates = {} 
-            grouped = df.groupby('filename', sort=False)
-
-            # 預先撈出所有資料庫音檔，避免迴圈內重複查詢 (提升效能且最準確)
-            potential_audios = AudioInfo.query.all()
-
-            for raw_filename, group in grouped:
-                # 取得 CSV 裡的「完整檔名」
-                csv_filename = str(raw_filename).strip()
-                if not csv_filename or csv_filename.lower() == 'nan':
+            for index, row in df.iterrows():
+                # --- 3. 解析 Excel A~D 欄 ---
+                # A欄: start_time (相對時間)
+                # D欄: filename (完整檔名)
+                try:
+                    excel_start_time = float(row['start_time'])
+                except:
                     continue
-                
-                target_audios = []
-                for audio in potential_audios:
-                    db_filename = audio.file_name
+
+                raw_filename = str(row.get('filename', '')).strip()
+                if not raw_filename or raw_filename.lower() == 'nan': 
+                    continue
+
+                # --- 4. 🔑 核心修正：解析檔名裡的「絕對時間」 ---
+                # 使用正規表示法，從 D欄 檔名中挖出 "ID_時間" 的結構
+                # 例如: 6826.230311030000_2888.3427 -> 抓出 ID 和 2888.3427
+                match = re.search(r'^(.+?)_(\d+(?:\.\d+)?)', raw_filename)
+                if not match:
+                    errors.append(f"無法解析檔名時間: {raw_filename}")
+                    continue
                     
-                    # 2. 精準掠過資料庫檔名的前兩個底線 (例如 5_5_SM35955...wav)
-                    first_underscore = db_filename.find('_')
-                    if first_underscore != -1:
-                        second_underscore = db_filename.find('_', first_underscore + 1)
-                        if second_underscore != -1:
-                            real_name_suffix = db_filename[second_underscore + 1:]
-                        else:
-                            real_name_suffix = db_filename
-                    else:
-                        real_name_suffix = db_filename
+                core_id = match.group(1) # 純 ID 部分
+                filename_absolute_time = float(match.group(2)) # 檔名後面的秒數
 
-                    # 3. 比對檔名 (因為你說 CSV 是完整的，所以 == 或是 in 都能精準命中)
-                    if csv_filename.lower() == real_name_suffix.lower() or csv_filename.lower() in db_filename.lower():
-                        target_audios.append(audio)
+                # --- 5. 🚀 關鍵計算：真實時間 = 檔名時間 + Excel時間 ---
+                # 這就是為什麼之前 unknown 會消失的原因！
+                true_absolute_time = filename_absolute_time + excel_start_time
 
+                # --- 6. 尋找對應的音檔 ---
+                # 在資料庫裡找包含這個 ID 的檔案
+                target_audios = AudioInfo.query.filter(AudioInfo.file_name.ilike(f"%{core_id}%")).all()
                 if not target_audios:
-                    errors.append(f"找不到對應的音檔: {csv_filename}")
+                    errors.append(f"找不到音檔: {raw_filename}")
                     continue
 
-                slice_idx = 0  
-                for _, row in group.iterrows():
-                    raw_label = row.get('label', None)
-
-                    # 檢查空白 (NaN)
-                    if pd.isna(raw_label) or str(raw_label).strip() == '':
-                        slice_idx += 1
-                        continue
-                    
-                    # 檢查 0
-                    try:
-                        if float(raw_label) == 0:
-                            slice_idx += 1
-                            continue
-                    except (ValueError, TypeError):
-                        pass 
-
-                    # 解析標籤
-                    event_type = None
+                # --- 7. 解析標籤 (C欄) ---
+                # 在讀取標籤的那一行加上 .strip()
+                label = str(row['label']).strip()  # 這會自動砍掉前後多餘的空格
+                raw_label = row.get('label', '')
+                event_type = 90 # 預設為 noise
+                
+                if isinstance(raw_label, (int, float)):
+                    event_type = int(raw_label)
+                else:
                     label_text = str(raw_label).strip().lower()
-                    
-                    if label_text in LABEL_TO_EVENT_TYPE:
-                        event_type = LABEL_TO_EVENT_TYPE[label_text]
+                    if label_text.isdigit():
+                        event_type = int(label_text)
                     else:
-                        try:
-                             val = int(float(label_text))
-                             if val != 0:
-                                 event_type = val
-                        except:
-                             event_type = None 
+                        if 'constant' in label_text and 'whale' not in label_text: 
+                            event_type = 17
+                        elif 'unknown' in label_text: 
+                            event_type = 0
+                        else: 
+                            event_type = LABEL_TO_EVENT_TYPE.get(label_text, 90)
 
-                    # 若標籤無效，直接跳過
-                    if event_type is None:
-                        slice_idx += 1
-                        continue
+                excel_rows_success += 1
 
-                    # 紀錄有意義的更新
-                    excel_rows_success += 1
-                    for target_audio in target_audios:
-                        update_key = (target_audio.id, slice_idx)
-                        if update_key not in pending_updates:
+                # --- 8. 計算正確的切片 Index ---
+                for target_audio in target_audios:
+                    touched_audio_ids.add(target_audio.id)
+                    params = target_audio.get_params()
+                    segment_duration = float(params.get('segment_duration', 2.0))
+                    
+                    # 用「真實時間」去除以切片長度
+                    calc_idx = int(round(true_absolute_time / segment_duration))
+
+                    update_key = (target_audio.id, calc_idx)
+                    
+                    # --- 9. 優先權防護：誰優先誰留下 ---
+                    if update_key not in pending_updates:
+                        pending_updates[update_key] = event_type
+                    else:
+                        if get_priority(event_type) < get_priority(pending_updates[update_key]):
                             pending_updates[update_key] = event_type
-                        else:
-                            if get_priority(event_type) < get_priority(pending_updates[update_key]):
-                                pending_updates[update_key] = event_type
 
-                    slice_idx += 1
+            # --- 10. 一鍵洗底色 (把這次用到的音檔背景先刷成 noise 90) ---
+            if touched_audio_ids:
+                CetaceanInfo.query.filter(CetaceanInfo.audio_id.in_(touched_audio_ids)).update(
+                    {"event_type": 90, "detect_type": 0}, synchronize_session=False
+                )
+                db.session.flush()
 
-            # 4. 寫入資料庫 (只更新有標籤的部分，空白處與 0 維持原狀)
+            # --- 11. 蓋上正確標籤 ---
             for (aid, idx), final_type in pending_updates.items():
                 target_record = CetaceanInfo.query.filter_by(audio_id=aid).order_by(CetaceanInfo.id).offset(idx).first()
                 if target_record:
@@ -241,7 +226,7 @@ def import_excel():
 
         except Exception as e:
             db.session.rollback()
-            return jsonify({'success': False, 'error': f"處理出錯: {str(e)}"}), 500
+            errors.append(f"處理出錯: {str(e)}")
 
     return jsonify({
         'success': True, 
