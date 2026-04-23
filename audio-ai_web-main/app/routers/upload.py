@@ -108,11 +108,9 @@ def import_excel():
         return jsonify({'success': False, 'error': '沒有選擇檔案'}), 400
 
     LABEL_TO_EVENT_TYPE = {
-        'whale': 1, 'unknown': 0,
-        'whale_upsweep': 10, 'whale_downsweep': 11, 'whale_concave': 12,
-        'whale_convex': 13, 'whale_sine': 14, 'whale_click': 15,
-        'whale_burst': 16, 'whale_constant': 17,
-        'noise': 90, 'ship': 91, 'piling': 92
+        'whale': 1, 'unknown': 0, 'whale_unknown': 10, 'whale_upsweep': 11, 'whale_downsweep': 12,
+        'whale_concave': 13, 'whale_convex': 14, 'whale_sine': 15, 'whale_click': 16,
+        'whale_burst': 17, 'whale_constant': 18, 'noise': 90, 'ship': 91, 'piling': 92
     }
 
     def get_priority(etype):
