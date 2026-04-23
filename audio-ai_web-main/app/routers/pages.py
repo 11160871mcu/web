@@ -28,20 +28,22 @@ def history():
     label_map = {l.id: l.name for l in labels}
     
     DEFAULT_LABEL_MAP = {
+        0: '0. 無標籤',  # 建議補上這行，以防有未標記的情況
         1: '1. 鯨魚 (Whale)',
-        10: '10. 上升型 (Upsweep)',
-        11: '11. 下降型 (Downsweep)',
-        12: '12. U型 (Concave)',
-        13: '13. 倒U型 (Convex)',
-        14: '14. sin型 (Sine)',
-        15: '15. 嘎搭聲 (Click)',
-        16: '16. 突發脈衝聲 (Burst)',
-        17: '17. 常數型 (Constant)',
+        10: '10. 未知聲紋 (Unknown Vocalization)',  # ✅ 修正：舊版這裡寫成上升型了
+        11: '11. 上升型 (Upsweep)',                  # ✅ 修正：編號往後移
+        12: '12. 下降型 (Downsweep)',                # ✅ 修正
+        13: '13. U型 (Concave)',                     # ✅ 修正
+        14: '14. 倒U型 (Convex)',                    # ✅ 修正
+        15: '15. sin型 (Sine)',                      # ✅ 修正
+        16: '16. 嘎搭聲 (Click)',                    # ✅ 修正
+        17: '17. 突發脈衝聲 (Burst)',                # ✅ 修正
+        18: '18. 常數型 (Constant)',                 # ✅ 新增：這是原本 17 的內容
         90: '90. 環境噪音 (Noise)',
         91: '91. 船舶 (Ship)',
         92: '92. 風機打樁 (Piling)'
     }
-    
+
     for upload in all_uploads:
         if upload.status == 'COMPLETED':
             cetaceans = CetaceanInfo.query.filter_by(audio_id=upload.id).filter(CetaceanInfo.event_type != 0).all()
