@@ -220,11 +220,16 @@ def import_excel():
 
                 for index, row in data_df.iterrows():
                     # --- 5. 解析分、秒欄位 → 轉成絕對秒數 ---
+                    # 任一欄位為 NULL → 整行跳過（視為環境噪音，不標鯨魚）
+                    if (pd.isna(row.iloc[start_min_col]) or pd.isna(row.iloc[start_sec_col]) or
+                            pd.isna(row.iloc[end_min_col])   or pd.isna(row.iloc[end_sec_col])):
+                        current_app.logger.info(f"跳過第 {index + 3} 行：含 NULL，視為環境噪音")
+                        continue
                     try:
-                        start_min = float(row.iloc[start_min_col]) if pd.notna(row.iloc[start_min_col]) else 0.0
-                        start_sec = float(row.iloc[start_sec_col]) if pd.notna(row.iloc[start_sec_col]) else 0.0
-                        end_min   = float(row.iloc[end_min_col])   if pd.notna(row.iloc[end_min_col])   else 0.0
-                        end_sec   = float(row.iloc[end_sec_col])   if pd.notna(row.iloc[end_sec_col])   else 0.0
+                        start_min = float(row.iloc[start_min_col])
+                        start_sec = float(row.iloc[start_sec_col])
+                        end_min   = float(row.iloc[end_min_col])
+                        end_sec   = float(row.iloc[end_sec_col])
                     except Exception as e:
                         current_app.logger.warning(f"跳過第 {index + 3} 行：時間解析失敗 ({e})")
                         continue
@@ -255,6 +260,15 @@ def import_excel():
                         if step <= 0:
                             step = segment_duration
 
+                        # ✅ 先查詢該音檔的實際切片總數，用於邊界檢查
+                        total_slices = CetaceanInfo.query.filter_by(audio_id=target_audio.id).count()
+
+                        if total_slices == 0:
+                            current_app.logger.warning(
+                                f"AudioID={target_audio.id} 無切片資料，跳過配對"
+                            )
+                            continue
+
                         # ✅ 正確做法：找出所有「視窗有覆蓋到此事件時間段」的切片
                         # 切片 i 的視窗 = [i*step, i*step+segment_duration)
                         # 覆蓋條件：i*step < calc_end_time  AND  i*step+segment_duration > calc_start_time
@@ -263,24 +277,37 @@ def import_excel():
                         start_idx = max(0, int((calc_start_time - segment_duration) // step) + 1)
                         end_idx   = int((calc_end_time - 1e-9) // step)  # 1e-9 避免剛好整除時多算一格
 
+                        # ✅ 確保不超出實際切片範圍上限
+                        end_idx = min(end_idx, total_slices - 1)
+
                         current_app.logger.info(
                             f"✅ 配對: {target_audio.file_name} | "
                             f"{start_min:.0f}分{start_sec}秒 ~ {end_min:.0f}分{end_sec}秒 "
                             f"= {calc_start_time:.2f}s~{calc_end_time:.2f}s | "
-                            f"step={step}s | 切片: {start_idx}~{end_idx} | event=1(鯨魚)"
+                            f"step={step}s | 總切片={total_slices} | 切片: {start_idx}~{end_idx} | event=1(鯨魚)"
                         )
 
                         if target_audio.id not in audio_updates:
                             audio_updates[target_audio.id] = {}
 
                         for calc_idx in range(start_idx, end_idx + 1):
+                            # ✅ 雙重保險：再次確認索引不超出範圍
+                            if calc_idx >= total_slices:
+                                current_app.logger.warning(
+                                    f"切片索引 {calc_idx} 超出範圍（共 {total_slices} 個），跳過"
+                                )
+                                continue
                             # 同一切片若已有鯨魚標記（1~17），不覆蓋；否則寫入
                             existing = audio_updates[target_audio.id].get(calc_idx)
                             if existing is None or not (1 <= existing <= 17):
                                 audio_updates[target_audio.id][calc_idx] = event_type
 
                 # --- 7. 安全寫入：逐音檔 SELECT → 記憶體修改 → commit ---
-                # 先全設為 90，再把 Excel 標記到的切片改為鯨魚，最後一次 commit
+                # 確保所有配對到的音檔都被洗底色（即使 Excel 全空、沒有任何鯨魚標記）
+                for target_audio in target_audios:
+                    if target_audio.id not in audio_updates:
+                        audio_updates[target_audio.id] = {}  # 空字典 = 全部洗 90，無鯨魚
+
                 for audio_id, whale_indices in audio_updates.items():
                     try:
                         all_records = (
