@@ -1,16 +1,13 @@
 import os
 import json
 import shutil
-import pandas as pd
-import io
-import zipfile
-import csv
-from datetime import datetime
-from flask import request, redirect, url_for, current_app, jsonify, send_file
+import re
+from flask import request, redirect, url_for, current_app, jsonify
 from werkzeug.utils import secure_filename
+import pandas as pd
 from ..main_router import main_bp
 from .. import db, celery
-from ..models import AudioInfo, PointInfo, CetaceanInfo, Result, Label
+from ..models import AudioInfo, PointInfo, CetaceanInfo
 
 @main_bp.route('/upload', methods=['POST'])
 def upload():
@@ -41,8 +38,8 @@ def upload():
     params_json = json.dumps(params_dict)
     default_point = PointInfo.query.first()
     point_id = default_point.id if default_point else None
-
     uploaded_ids = []
+
     for file in files:
         if file and file.filename != '':
             filename = secure_filename(file.filename)
@@ -64,15 +61,15 @@ def upload():
             result_dir_relative = os.path.join('results', str(upload_id))
             result_dir_absolute = os.path.join(current_app.root_path, 'static', result_dir_relative)
             os.makedirs(result_dir_absolute, exist_ok=True)
-
+            
             upload_filename = f"{upload_id}_{filename}"
             upload_path_absolute = os.path.join(current_app.root_path, current_app.config['UPLOAD_FOLDER'], upload_filename)
             file.save(upload_path_absolute)
-
+            
             new_audio.file_path = upload_path_absolute
             new_audio.result_path = result_dir_relative
             db.session.commit()
-
+            
             celery.send_task('app.tasks.process_audio_task', args=[upload_id])
             uploaded_ids.append(upload_id)
 
@@ -86,7 +83,7 @@ def delete_selected_uploads():
     upload_ids = request.form.getlist('upload_ids')
     if not upload_ids:
         return redirect(url_for('main.history'))
-
+    
     uploads = AudioInfo.query.filter(AudioInfo.id.in_(upload_ids)).all()
     for u in uploads:
         path = os.path.join(current_app.root_path, 'static', u.result_path)
@@ -98,203 +95,247 @@ def delete_selected_uploads():
     db.session.commit()
     return redirect(url_for('main.history'))
 
+@main_bp.route('/batch_download_zip', methods=['POST'])
+def batch_download_zip():
+    """批次下載選取的專案 (壓縮為 ZIP)"""
+    import zipfile
+    import io
+    import os
+    from flask import send_file
+
+    upload_ids = request.form.getlist('upload_ids')
+    if not upload_ids:
+        return redirect(url_for('main.history'))
+    
+    uploads = AudioInfo.query.filter(AudioInfo.id.in_(upload_ids)).all()
+    if not uploads:
+        return redirect(url_for('main.history'))
+
+    memory_file = io.BytesIO()
+    with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for upload in uploads:
+            if upload.file_path and os.path.exists(upload.file_path):
+                zf.write(upload.file_path, arcname=f"raw_audio/{upload.file_name}")
+            
+            if upload.result_path:
+                result_dir_absolute = os.path.join(current_app.root_path, 'static', upload.result_path)
+                if os.path.exists(result_dir_absolute):
+                    for root, _, files in os.walk(result_dir_absolute):
+                        for file in files:
+                            file_path = os.path.join(root, file)
+                            rel_path = os.path.relpath(file_path, result_dir_absolute)
+                            arcname = f"results_{upload.id}/{rel_path}"
+                            zf.write(file_path, arcname=arcname)
+    
+    memory_file.seek(0)
+    return send_file(
+        memory_file,
+        mimetype='application/zip',
+        as_attachment=True,
+        download_name='batch_export.zip'
+    )
+
 @main_bp.route('/api/import_excel', methods=['POST'])
 def import_excel():
-    """ 
-    匯入 Excel/CSV 標記資料 (終極完美版 - 完整檔名精確比對)
+    """
+    匯入 Excel 標記資料（新格式）
+
+    Excel 格式規範：
+      - 檔名（或 Sheet 名稱）= 音檔核心 ID，例：PAM_20250622_020939
+      - 第 0 行：大標題列（起始時間、結束時間、起始頻率...）
+      - 第 1 行：子標題列（分、秒、分、秒...）
+      - 第 2 行起：實際標記資料，每行一筆鯨魚事件
+      - 有寫的行 → event_type=1（鯨魚）
+      - 沒有寫的切片 → 全部洗成 event_type=90（環境噪音）
+
+    安全機制：
+      - 使用記憶體操作（SELECT → 修改 → commit），
+        避免 bulk UPDATE 後程式崩潰導致資料全變 90。
     """
     files = request.files.getlist('files')
     if not files:
-        return jsonify({'success': False, 'error': '沒有選擇檔案'}), 400
-
-    LABEL_TO_EVENT_TYPE = {
-        'whale': 1, 'unknown': 0, 'whale_unknown': 10, 'whale_upsweep': 11, 'whale_downsweep': 12,
-        'whale_concave': 13, 'whale_convex': 14, 'whale_sine': 15, 'whale_click': 16,
-        'whale_burst': 17, 'whale_constant': 18, 'noise': 90, 'ship': 91, 'piling': 92
-    }
-
-    def get_priority(etype):
-        if etype is None: return 999
-        if 1 <= etype <= 17: return 1  
-        if etype == 0: return 2        
-        if etype >= 90: return 10      
-        return 5
+        return jsonify({'error': '沒有選擇檔案'}), 400
 
     excel_rows_success = 0
     db_slice_updated = 0
     errors = []
 
+    current_app.logger.info("--- 🚀 開始匯入 Excel 任務（新格式）---")
+
     for file in files:
-        try:
-            if file.filename.endswith('.csv'):
-                df = pd.read_csv(file)
-            elif file.filename.endswith(('.xlsx', '.xls')):
-                df = pd.read_excel(file)
-            else:
-                continue 
-        except Exception as e:
-            errors.append(f"讀取檔案失敗 {file.filename}: {str(e)}")
+        if not file.filename.endswith(('.xlsx', '.xls')):
+            errors.append(f"不支援的檔案格式: {file.filename}，請上傳 .xlsx 或 .xls")
             continue
-
         try:
-            df.columns = [str(c).strip().lower() for c in df.columns]
-            
-            if 'filename' not in df.columns:
-                return jsonify({'success': False, 'error': f"檔案 {file.filename} 缺少 filename 欄位"}), 400
+            # --- 1. 讀取所有 sheet（每個 sheet = 一個音檔）---
+            all_sheets = pd.read_excel(file, sheet_name=None, header=None)
 
-            pending_updates = {} 
-            grouped = df.groupby('filename', sort=False)
+            for sheet_name, raw_df in all_sheets.items():
+                current_app.logger.info(f"📄 處理 Sheet: [{sheet_name}]，共 {len(raw_df)} 行")
 
-            potential_audios = AudioInfo.query.all()
+                # sheet 名稱即音檔核心 ID
+                excel_core_id = sheet_name.strip()
 
-            for raw_filename, group in grouped:
-                csv_filename = str(raw_filename).strip()
-                if not csv_filename or csv_filename.lower() == 'nan':
-                    continue
-                
-                target_audios = []
-                for audio in potential_audios:
-                    db_filename = audio.file_name
-                    
-                    first_underscore = db_filename.find('_')
-                    if first_underscore != -1:
-                        second_underscore = db_filename.find('_', first_underscore + 1)
-                        if second_underscore != -1:
-                            real_name_suffix = db_filename[second_underscore + 1:]
-                        else:
-                            real_name_suffix = db_filename
-                    else:
-                        real_name_suffix = db_filename
-
-                    if csv_filename.lower() == real_name_suffix.lower() or csv_filename.lower() in db_filename.lower():
-                        target_audios.append(audio)
+                # --- 2. 配對資料庫中的音檔 ---
+                target_audios = AudioInfo.query.filter(
+                    AudioInfo.file_name.ilike(f"%{excel_core_id}%")
+                ).all()
 
                 if not target_audios:
-                    errors.append(f"找不到對應的音檔: {csv_filename}")
+                    msg = f"找不到音檔，核心ID: {excel_core_id}"
+                    current_app.logger.warning(f"❌ {msg}")
+                    errors.append(msg)
                     continue
 
-                slice_idx = 0  
-                for _, row in group.iterrows():
-                    raw_label = row.get('label', None)
+                # --- 3. 解析欄位位置（從第 0 行大標題找「起始」「結束」）---
+                header_row0 = raw_df.iloc[0].astype(str).str.strip()
 
-                    if pd.isna(raw_label) or str(raw_label).strip() == '':
-                        slice_idx += 1
-                        continue
-                    
+                start_col_idx = None
+                end_col_idx   = None
+                for i, val in enumerate(header_row0):
+                    if '起始' in val or 'start' in val.lower() or 'begin' in val.lower():
+                        if start_col_idx is None:
+                            start_col_idx = i
+                    if '結束' in val or 'end' in val.lower():
+                        if end_col_idx is None:
+                            end_col_idx = i
+
+                # 若找不到欄位，預設前四欄：[起始分, 起始秒, 結束分, 結束秒]
+                if start_col_idx is None:
+                    start_col_idx = 0
+                if end_col_idx is None:
+                    end_col_idx = 2
+
+                start_min_col = start_col_idx
+                start_sec_col = start_col_idx + 1
+                end_min_col   = end_col_idx
+                end_sec_col   = end_col_idx + 1
+
+                # --- 4. 資料從第 2 行開始（跳過大標題行與分/秒子標題行）---
+                data_df = raw_df.iloc[2:].reset_index(drop=True)
+
+                # audio_updates: { audio_id: { slice_index: event_type } }
+                # 收集所有要打鯨魚標籤的切片，最後再統一寫入
+                audio_updates = {}
+
+                for index, row in data_df.iterrows():
+                    # --- 5. 解析分、秒欄位 → 轉成絕對秒數 ---
                     try:
-                        if float(raw_label) == 0:
-                            slice_idx += 1
-                            continue
-                    except (ValueError, TypeError):
-                        pass 
-
-                    event_type = None
-                    label_text = str(raw_label).strip().lower()
-                    
-                    if label_text in LABEL_TO_EVENT_TYPE:
-                        event_type = LABEL_TO_EVENT_TYPE[label_text]
-                    else:
-                        try:
-                             val = int(float(label_text))
-                             if val != 0:
-                                 event_type = val
-                        except:
-                             event_type = None 
-
-                    if event_type is None:
-                        slice_idx += 1
+                        start_min = float(row.iloc[start_min_col]) if pd.notna(row.iloc[start_min_col]) else 0.0
+                        start_sec = float(row.iloc[start_sec_col]) if pd.notna(row.iloc[start_sec_col]) else 0.0
+                        end_min   = float(row.iloc[end_min_col])   if pd.notna(row.iloc[end_min_col])   else 0.0
+                        end_sec   = float(row.iloc[end_sec_col])   if pd.notna(row.iloc[end_sec_col])   else 0.0
+                    except Exception as e:
+                        current_app.logger.warning(f"跳過第 {index + 3} 行：時間解析失敗 ({e})")
                         continue
 
+                    calc_start_time = start_min * 60.0 + start_sec
+                    calc_end_time   = end_min   * 60.0 + end_sec
+
+                    if calc_end_time <= calc_start_time:
+                        current_app.logger.warning(
+                            f"跳過第 {index + 3} 行：結束時間({calc_end_time}s) <= 起始時間({calc_start_time}s)"
+                        )
+                        continue
+
+                    # 有寫記錄的行 = 鯨魚
+                    event_type = 1
                     excel_rows_success += 1
+
+                    # --- 6. 對每個配對音檔計算切片索引 ---
                     for target_audio in target_audios:
-                        update_key = (target_audio.id, slice_idx)
-                        if update_key not in pending_updates:
-                            pending_updates[update_key] = event_type
-                        else:
-                            if get_priority(event_type) < get_priority(pending_updates[update_key]):
-                                pending_updates[update_key] = event_type
+                        try:
+                            params = json.loads(target_audio.params) if target_audio.params else {}
+                        except Exception:
+                            params = {}
 
-                    slice_idx += 1
+                        segment_duration = float(params.get('segment_duration', 3.0))
+                        overlap_pct      = float(params.get('overlap', 50.0))
+                        step             = segment_duration * (1.0 - overlap_pct / 100.0)
+                        if step <= 0:
+                            step = segment_duration
 
-            for (aid, idx), final_type in pending_updates.items():
-                target_record = CetaceanInfo.query.filter_by(audio_id=aid).order_by(CetaceanInfo.id).offset(idx).first()
-                if target_record:
-                    target_record.event_type = final_type
-                    target_record.detect_type = 0
-                    db_slice_updated += 1
+                        # ✅ 正確做法：找出所有「視窗有覆蓋到此事件時間段」的切片
+                        # 切片 i 的視窗 = [i*step, i*step+segment_duration)
+                        # 覆蓋條件：i*step < calc_end_time  AND  i*step+segment_duration > calc_start_time
+                        # 整理後：i >= ceil((calc_start_time - segment_duration) / step)
+                        #          i <= floor((calc_end_time - epsilon) / step)
+                        start_idx = max(0, int((calc_start_time - segment_duration) // step) + 1)
+                        end_idx   = int((calc_end_time - 1e-9) // step)  # 1e-9 避免剛好整除時多算一格
 
-            db.session.commit()
+                        current_app.logger.info(
+                            f"✅ 配對: {target_audio.file_name} | "
+                            f"{start_min:.0f}分{start_sec}秒 ~ {end_min:.0f}分{end_sec}秒 "
+                            f"= {calc_start_time:.2f}s~{calc_end_time:.2f}s | "
+                            f"step={step}s | 切片: {start_idx}~{end_idx} | event=1(鯨魚)"
+                        )
+
+                        if target_audio.id not in audio_updates:
+                            audio_updates[target_audio.id] = {}
+
+                        for calc_idx in range(start_idx, end_idx + 1):
+                            # 同一切片若已有鯨魚標記（1~17），不覆蓋；否則寫入
+                            existing = audio_updates[target_audio.id].get(calc_idx)
+                            if existing is None or not (1 <= existing <= 17):
+                                audio_updates[target_audio.id][calc_idx] = event_type
+
+                # --- 7. 安全寫入：逐音檔 SELECT → 記憶體修改 → commit ---
+                # 先全設為 90，再把 Excel 標記到的切片改為鯨魚，最後一次 commit
+                for audio_id, whale_indices in audio_updates.items():
+                    try:
+                        all_records = (
+                            CetaceanInfo.query
+                            .filter_by(audio_id=audio_id)
+                            .order_by(CetaceanInfo.id)
+                            .all()
+                        )
+
+                        if not all_records:
+                            current_app.logger.warning(f"AudioID={audio_id} 無切片資料，跳過")
+                            continue
+
+                        total_slices = len(all_records)
+                        current_app.logger.info(
+                            f"洗底色: AudioID={audio_id}，共 {total_slices} 個切片，"
+                            f"鯨魚切片數={len(whale_indices)}"
+                        )
+
+                        # 全部先設為環境噪音
+                        for record in all_records:
+                            record.event_type = 90
+                            record.detect_type = 0
+
+                        # 把 Excel 標記的切片改為鯨魚
+                        for idx, etype in whale_indices.items():
+                            if idx < total_slices:
+                                all_records[idx].event_type = etype
+                                all_records[idx].detect_type = 0
+                                db_slice_updated += 1
+                            else:
+                                current_app.logger.warning(
+                                    f"切片索引 {idx} 超出範圍（共 {total_slices} 個），跳過"
+                                )
+
+                        db.session.commit()
+                        current_app.logger.info(f"✅ AudioID={audio_id} 寫入完成")
+
+                    except Exception as e:
+                        db.session.rollback()
+                        msg = f"AudioID={audio_id} 寫入失敗: {str(e)}"
+                        current_app.logger.error(f"❌ {msg}")
+                        errors.append(msg)
 
         except Exception as e:
             db.session.rollback()
-            return jsonify({'success': False, 'error': f"處理出錯: {str(e)}"}), 500
+            current_app.logger.error(f"❌ 檔案處理出錯: {str(e)}")
+            errors.append(f"檔案 {file.filename} 處理出錯: {str(e)}")
+
+    current_app.logger.info("--- 🏁 任務結束 ---")
+    current_app.logger.info(f"成功處理 {excel_rows_success} 筆標記，更新 {db_slice_updated} 個切片標籤。")
 
     return jsonify({
-        'success': True, 
-        'success_count': excel_rows_success, 
+        'success': True,
+        'success_count': excel_rows_success,
         'db_updated': db_slice_updated,
         'errors': errors
     })
-
-# ================= 新增：批次匯出訓練資料集 ZIP =================
-@main_bp.route('/history/batch_download_zip', methods=['POST'])
-def batch_download_zip():
-    """批次匯出選取的資料集 (包含圖片、音檔、CSV)"""
-    upload_ids = request.form.getlist('upload_ids')
-    export_options = request.form.getlist('export_options')
-
-    if not upload_ids:
-        return redirect(url_for('main.history'))
-
-    memory_file = io.BytesIO()
-    with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
-        all_labels_rows = []
-        
-        labels = Label.query.all()
-        labels_map = {l.id: l.name for l in labels} if labels else {}
-        
-        for aid in upload_ids:
-            audio = AudioInfo.query.get(aid)
-            if not audio:
-                continue
-
-            results = Result.query.filter_by(upload_id=aid).order_by(Result.id).all()
-            cetaceans = CetaceanInfo.query.filter_by(audio_id=aid).order_by(CetaceanInfo.id).all()
-
-            for i, res in enumerate(results):
-                cetacean = cetaceans[i] if i < len(cetaceans) else None
-                label_id = cetacean.event_type if cetacean else 0
-                label_name = labels_map.get(label_id, str(label_id))
-
-                filename = res.spectrogram_training_filename or f"slice_{audio.id}_{i}.png"
-
-                all_labels_rows.append([filename, label_id, label_name, audio.file_name])
-
-                if 'images' in export_options and res.spectrogram_training_filename:
-                    img_path = os.path.join(current_app.root_path, 'static', audio.result_path, res.spectrogram_training_filename)
-                    if os.path.exists(img_path):
-                        zf.write(img_path, arcname=f"images/{filename}")
-
-                if 'audio' in export_options:
-                    audio_slice_name = filename.replace('.png', '.wav').replace('.jpg', '.wav')
-                    audio_path = os.path.join(current_app.root_path, 'static', audio.result_path, audio_slice_name)
-                    if os.path.exists(audio_path):
-                        zf.write(audio_path, arcname=f"audio/{audio_slice_name}")
-
-        if 'csv' in export_options and all_labels_rows:
-            csv_buffer = io.StringIO()
-            csv_buffer.write('\ufeff') 
-            writer = csv.writer(csv_buffer)
-            writer.writerow(['filename', 'label_id', 'label_name', 'original_audio'])
-            writer.writerows(all_labels_rows)
-            zf.writestr('labels.csv', csv_buffer.getvalue())
-            
-    memory_file.seek(0)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
-    return send_file(
-        memory_file,
-        mimetype='application/zip',
-        as_attachment=True,
-        download_name=f'OceanAI_Dataset_{timestamp}.zip'
-    )
