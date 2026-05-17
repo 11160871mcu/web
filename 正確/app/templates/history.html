@@ -1,0 +1,717 @@
+{% extends "base.html" %}
+
+{% block title %}分析歷史紀錄 - OceanAI{% endblock %}
+
+{% block content %}
+<div class="container-card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+        <h1>分析歷史紀錄</h1>
+        <div class="sort-options">
+            <span style="color: var(--text-light); margin-right: 10px;">排序：</span>
+            <a href="{{ url_for('main.history', sort='desc') }}"
+                class="btn btn-sm {{ 'btn-secondary' if current_sort != 'desc' else 'btn-primary' }}"
+                style="padding: 5px 12px; font-size: 0.9rem;">由新到舊</a>
+            <a href="{{ url_for('main.history', sort='asc') }}"
+                class="btn btn-sm {{ 'btn-secondary' if current_sort != 'asc' else 'btn-primary' }}"
+                style="padding: 5px 12px; font-size: 0.9rem;">由舊到新</a>
+        </div>
+    </div>
+
+    <form id="history-form" method="post">
+        <div style="overflow-x: auto;">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th width="40"><input type="checkbox" onclick="toggleAll(this)"></th>
+                        <th width="60">ID</th>
+                        <th>原始檔案</th>
+                        <th>狀態</th>
+                        <th>分析時間</th>
+                        <th>參數摘要 / 標記數據</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for upload in uploads %}
+                    <tr id="upload-row-{{ upload.id }}">
+                        <td><input type="checkbox" name="upload_ids" value="{{ upload.id }}" class="upload-checkbox"></td>
+                        <td><strong>#{{ upload.id }}</strong></td>
+                        <td>
+                            <div style="font-weight: 500;">{{ upload.original_filename }}</div>
+                        </td>
+                        <td class="status-cell">
+                            {% if upload.status == 'PROCESSING' %}
+                            <div style="width: 120px; background: #eee; height: 8px; border-radius: 4px; overflow: hidden; position: relative;">
+                                <div class="progress-bar" style="width: {{ upload.progress }}%; background: var(--highlight); height: 100%; transition: width 0.4s;"></div>
+                            </div>
+                            <small class="progress-text" style="color: var(--primary-med);">{{ upload.progress }}%</small>
+                            {% else %}
+                            <span class="status-badge status-{{ upload.status }}">{{ upload.status }}</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ upload.upload_timestamp.strftime('%Y-%m-%d %H:%M') }}</td>
+                        <td>
+                            {% if upload.label_counts %}
+                                <div style="display: flex; flex-wrap: wrap; gap: 4px; max-width: 250px;">
+                                    {% for label_name, count in upload.label_counts.items() %}
+                                    <span style="background: #e0f2fe; color: #0369a1; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; font-weight: 500; border: 1px solid #bae6fd;">
+                                        {{ label_name }}: {{ count }}
+                                    </span>
+                                    {% endfor %}
+                                </div>
+                            {% else %}
+                                {% set p = upload.get_params() %}
+                                <small style="color: #666;">
+                                    {{ p.spec_type }} | {{ p.segment_duration }}s | ov: {{ p.overlap }}%
+                                </small>
+                            {% endif %}
+                        </td>
+                        <td class="action-cell">
+                            {% if upload.status == 'COMPLETED' %}
+                            <a href="{{ url_for('main.results', upload_id=upload.id) }}" class="btn btn-secondary" style="padding: 4px 10px; font-size: 0.85rem;">查看結果</a>
+                            {% else %}
+                            <span style="color: #ccc; font-size: 0.85rem;">--</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="7" style="text-align: center; padding: 3rem; color: #999;">
+                            尚無分析資料，請先前往「上傳分析」頁面。
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div style="margin-top: 2rem; display: flex; justify-content: flex-end; gap: 1rem;">
+            <button type="button" class="btn btn-secondary" onclick="openImportModal()">匯入標記資料 (CSV/Excel)</button>
+            <button type="button" class="btn" style="background: #0ea5e9; color: white;" onclick="openExportModal()">匯出訓練資料集</button>
+            <button type="button" class="btn" style="background: #20c997; color: white;" onclick="openTrainingModal()">啟動模型訓練</button>
+            <button type="button" class="btn btn-danger" onclick="submitDeletion()">刪除選取項目</button>
+        </div>
+
+        <div id="export-modal" class="modal-overlay">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>📥 匯出資料集設定</h2>
+                    <button type="button" class="modal-close" onclick="closeExportModal()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p style="margin-bottom: 1rem; color: #64748b;">請選擇您要包含在壓縮檔內的資料類型：</p>
+                    <div class="form-group" style="display: flex; flex-direction: column; gap: 0.8rem;">
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                            <input type="checkbox" name="export_options" value="images" checked>
+                            <strong>頻譜圖切片</strong> (AI 視覺辨識訓練用圖片)
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                            <input type="checkbox" name="export_options" value="audio" checked>
+                            <strong>音檔切片</strong> (原始切割後的 .wav 音檔片段)
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                            <input type="checkbox" name="export_options" value="csv" checked>
+                            <strong>整體標記資料</strong> (labels.csv - 包含每張切片的分類標籤)
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                            <input type="checkbox" name="export_options" value="bbox" checked>
+                            <strong>進階框選資料</strong> (bbox_annotations.csv - 包含框選座標與頻率範圍)
+                        </label>
+                    </div>
+                </div>
+                <div class="modal-footer" style="margin-top: 1.5rem;">
+                    <button type="button" class="btn btn-secondary" onclick="closeExportModal()">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="confirmExport()">確認匯出</button>
+                </div>
+            </div>
+        </div>
+    </form>
+
+    <div id="training-modal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>🎯 訓練設定</h2>
+                <button type="button" class="modal-close" onclick="closeTrainingModal()">&times;</button>
+            </div>
+            <form id="training-config-form" method="post" action="{{ url_for('main.start_training') }}">
+                <div class="modal-body">
+                    <div id="hidden-upload-ids"></div>
+
+                    <div class="form-group">
+                        <label style="font-weight: 600; margin-bottom: 0.75rem; display: block;">選擇模型架構</label>
+                        <div style="display: grid; gap: 0.75rem;">
+                            <label class="model-option selected" onclick="selectModel(this)">
+                                <input type="radio" name="model_type" value="yolov8n-cls" checked>
+                                <div class="model-option-header"><span>🚀</span> YOLOv8n 分類</div>
+                                <div class="model-option-desc">輕量級，訓練快速，適合快速實驗</div>
+                            </label>
+                            <label class="model-option" onclick="selectModel(this)">
+                                <input type="radio" name="model_type" value="yolov8s-cls">
+                                <div class="model-option-header"><span>⚡</span> YOLOv8s 分類</div>
+                                <div class="model-option-desc">標準版，精度與速度平衡</div>
+                            </label>
+                            <label class="model-option" onclick="selectModel(this)">
+                                <input type="radio" name="model_type" value="resnet18">
+                                <div class="model-option-header"><span>🧠</span> ResNet18</div>
+                                <div class="model-option-desc">經典 CNN 架構，支援 Focal Loss 設定</div>
+                            </label>
+                            <label class="model-option" onclick="selectModel(this)">
+                                <input type="radio" name="model_type" value="efficientnet_b0">
+                                <div class="model-option-header"><span>💎</span> EfficientNet-B0</div>
+                                <div class="model-option-desc">高效能 CNN，精度優秀</div>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="form-group" style="margin-top: 1.5rem;">
+                        <label style="font-weight: 600; margin-bottom: 0.75rem; display: block;">訓練參數</label>
+                        
+                        <div class="form-row custom-grid-row">
+                            <div class="form-group">
+                                <label for="epochs">訓練輪數 (Epochs)</label>
+                                <input type="number" id="epochs" name="epochs" value="50" min="1" max="500" style="width: 100%; padding: 0.4rem; border-radius: 4px; border: 1px solid #ccc;">
+                            </div>
+                            <div class="form-group">
+                                <label for="batch_size">批次大小 (Batch Size)</label>
+                                <select id="batch_size" name="batch_size" style="width: 100%; padding: 0.4rem; border-radius: 4px; border: 1px solid #ccc;">
+                                    <option value="8">8</option>
+                                    <option value="16" selected>16</option>
+                                    <option value="32">32</option>
+                                    <option value="64">64</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="form-row custom-grid-row" style="margin-top: 1rem;">
+                            <div class="form-group">
+                                <label for="learning_rate">學習率 (Learning Rate)</label>
+                                <select id="learning_rate" name="learning_rate" style="width: 100%; padding: 0.4rem; border-radius: 4px; border: 1px solid #ccc;">
+                                    <option value="0.0001">0.0001</option>
+                                    <option value="0.001" selected>0.001</option>
+                                    <option value="0.01">0.01</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="image_size">圖片尺寸 (px)</label>
+                                <select id="image_size" name="image_size" style="width: 100%; padding: 0.4rem; border-radius: 4px; border: 1px solid #ccc;">
+                                    <option value="128">128</option>
+                                    <option value="224" selected>224</option>
+                                    <option value="256">256</option>
+                                    <option value="320">320</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="form-row" id="loss-function-group" style="margin-top: 1rem;">
+                            <div class="form-group" style="grid-column: 1 / -1;">
+                                <label style="font-weight: 600;">損失函數 (Loss Function)</label>
+                                <div style="margin-top: 0.5rem; display: flex; gap: 1.5rem; flex-wrap: wrap;" id="loss_radio_container">
+                                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                                        <input type="radio" name="loss_function" value="cross_entropy" id="chk_cross_entropy" onclick="toggleLoss('ce')" checked> 
+                                        Cross Entropy
+                                    </label>
+                                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                                        <input type="radio" name="loss_function" value="focal_loss_binary" id="chk_focal_binary" onclick="toggleLoss('binary')"> 
+                                        Binary Focal Loss
+                                    </label>
+                                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                                        <input type="radio" name="loss_function" value="focal_loss_multi_class" id="chk_focal_multi" onclick="toggleLoss('multi')"> 
+                                        Multi-class Focal Loss
+                                    </label>
+                                </div>
+                                <div id="loss_description" style="color: #0369a1; background: #e0f2fe; padding: 8px 12px; border-radius: 4px; margin-top: 10px; font-size: 0.9rem; border: 1px solid #bae6fd;">
+                                    <strong>Cross Entropy Loss</strong>：標準交叉熵損失函數，適用於大多數分類任務。
+                                </div>
+                                <small style="color: #666; display: block; margin-top: 6px;">
+                                    💡 提示：Focal Loss 適用於類別樣本不平衡時。僅在 CNN 模型中生效。
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-group" style="margin-top: 1.5rem;" id="label-settings-group">
+                        <label style="font-weight: 600; margin-bottom: 0.75rem; display: flex; justify-content: space-between; align-items: center;">
+                            <span>訓練標籤與抽樣筆數 (進階)</span>
+                            <span style="font-size: 0.85rem; font-weight: normal; color: #64748b;" id="loading-stats">處理中...</span>
+                        </label>
+                        <div id="label-settings-container" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 1rem; max-height: 250px; overflow-y: auto;">
+                            </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeTrainingModal()">取消</button>
+                    <button type="submit" class="btn btn-primary">開始訓練</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="import-modal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>📊 匯入標記資料 (CSV/Excel)</h2>
+                <button type="button" class="modal-close" onclick="closeImportModal()">&times;</button>
+            </div>
+            <form id="import-config-form" onsubmit="submitImportExcel(event)">
+                <div class="modal-body">
+                    <p style="margin-bottom: 1rem; color: #64748b; line-height: 1.6;">
+                        請上傳您修改好的 CSV 或 Excel 檔案（格式需與系統匯出的 labels.csv 相同）。<br>
+                        系統會依據檔案內的 <code>filename</code> 尋找對應的資料，並將分類快速更新為您填入的 <code>label_name</code> 或 <code>label</code>。
+                    </p>
+                    <div class="form-group" style="margin-top: 1.5rem;">
+                        <label for="excelModalUploadInput" style="font-weight: 600; margin-bottom: 0.75rem; display: block;">選擇檔案 (支援多選)</label>
+                        <input type="file" id="excelModalUploadInput" multiple accept=".xlsx, .xls, .csv" style="width: 100%; border: 1px solid #ddd; border-radius: 4px; padding: 0.5rem;" required />
+                    </div>
+                </div>
+                <div class="modal-footer" style="margin-top: 1.5rem;">
+                    <button type="button" class="btn btn-secondary" onclick="closeImportModal()">取消</button>
+                    <button type="submit" class="btn btn-primary" id="btnSubmitImport">開始匯入</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div id="data-config" data-new-upload-id="{{ request.args.get('new_upload_id') }}"></div>
+
+<script>
+    // ==========================================
+    // 1. Shift 區間選取與左鍵拖曳框選功能
+    // ==========================================
+    let lastChecked = null;
+    let isSelecting = false;
+    let currentSelection = null;
+    let startPageX, startPageY;
+    let lastClientX, lastClientY;
+    let scrollInterval = null;
+
+    document.addEventListener('DOMContentLoaded', function() {
+        // Shift 連續勾選
+        const checkboxes = document.querySelectorAll('.upload-checkbox');
+        checkboxes.forEach(cb => {
+            cb.addEventListener('click', handleCheckboxClick);
+        });
+
+        // 啟動 Polling 機制
+        initPolling();
+    });
+
+    function handleCheckboxClick(e) {
+        const checkboxes = Array.from(document.querySelectorAll('.upload-checkbox'));
+        if (!lastChecked) {
+            lastChecked = this;
+            return;
+        }
+        if (e.shiftKey) {
+            let start = checkboxes.indexOf(this);
+            let end = checkboxes.indexOf(lastChecked);
+            checkboxes.slice(Math.min(start, end), Math.max(start, end) + 1)
+                      .forEach(cb => cb.checked = this.checked);
+        }
+        lastChecked = this;
+    }
+
+    function handleAutoScroll() {
+        if (!isSelecting) return;
+        const threshold = 50;
+        const maxSpeed = 15;
+        let speed = 0;
+
+        if (lastClientY < threshold) {
+            speed = -Math.min(maxSpeed, (threshold - lastClientY) / 2);
+        } else if (lastClientY > window.innerHeight - threshold) {
+            speed = Math.min(maxSpeed, (lastClientY - (window.innerHeight - threshold)) / 2);
+        }
+
+        if (speed !== 0) {
+            window.scrollBy(0, speed);
+            updateSelectionBox();
+            requestAnimationFrame(handleAutoScroll);
+        } else {
+            scrollInterval = null;
+        }
+    }
+
+    function updateSelectionBox() {
+        if (!currentSelection) return;
+        const currentPageX = lastClientX + window.scrollX;
+        const currentPageY = lastClientY + window.scrollY;
+
+        const left = Math.min(startPageX, currentPageX);
+        const top = Math.min(startPageY, currentPageY);
+        const width = Math.abs(startPageX - currentPageX);
+        const height = Math.abs(startPageY - currentPageY);
+
+        currentSelection.style.left = (left - window.scrollX) + 'px';
+        currentSelection.style.top = (top - window.scrollY) + 'px';
+        currentSelection.style.width = width + 'px';
+        currentSelection.style.height = height + 'px';
+    }
+
+    document.addEventListener('mousedown', function(e) {
+        if (e.target.closest('.upload-checkbox') || e.target.closest('.btn') || e.target.tagName === 'A' || e.target.closest('.modal-content')) return;
+        if (e.button !== 0) return;
+
+        isSelecting = true;
+        startPageX = e.pageX;
+        startPageY = e.pageY;
+        lastClientX = e.clientX;
+        lastClientY = e.clientY;
+
+        currentSelection = document.createElement('div');
+        currentSelection.id = 'drag-selector';
+        currentSelection.style.cssText = `
+            position: fixed; border: 2px dashed #007bff; background: rgba(0, 123, 255, 0.1);
+            pointer-events: none; z-index: 9999; box-sizing: border-box;
+        `;
+        document.body.appendChild(currentSelection);
+        document.body.style.userSelect = 'none';
+    });
+
+    document.addEventListener('mousemove', function(e) {
+        if (!isSelecting) return;
+        lastClientX = e.clientX;
+        lastClientY = e.clientY;
+        updateSelectionBox();
+        if (!scrollInterval) scrollInterval = requestAnimationFrame(handleAutoScroll);
+    });
+
+    document.addEventListener('mouseup', function() {
+        if (!isSelecting) return;
+        isSelecting = false;
+        document.body.style.userSelect = '';
+
+        if (currentSelection) {
+            const rect = currentSelection.getBoundingClientRect();
+            document.querySelectorAll('.upload-checkbox').forEach(cb => {
+                const cbRect = cb.getBoundingClientRect();
+                const centerX = (cbRect.left + cbRect.right) / 2;
+                const centerY = (cbRect.top + cbRect.bottom) / 2;
+                if (centerX >= rect.left && centerX <= rect.right &&
+                    centerY >= rect.top && centerY <= rect.bottom) {
+                    cb.checked = true;
+                }
+            });
+            currentSelection.remove();
+            currentSelection = null;
+        }
+    });
+
+    // ==========================================
+    // 2. 基礎按鈕功能 (全選、刪除、匯出)
+    // ==========================================
+    function toggleAll(source) {
+        document.querySelectorAll('.upload-checkbox').forEach(cb => cb.checked = source.checked);
+    }
+
+    function getSelectedIds() {
+        return Array.from(document.querySelectorAll('.upload-checkbox:checked')).map(cb => cb.value);
+    }
+
+    function submitDeletion() {
+        const ids = getSelectedIds();
+        if (ids.length === 0) { alert('請至少選取一個項目進行刪除。'); return; }
+        if (confirm(`確定刪除這 ${ids.length} 個項目嗎？`)) {
+            const form = document.getElementById('history-form');
+            form.action = "{{ url_for('main.delete_selected_uploads') }}";
+            form.submit();
+        }
+    }
+
+    function openExportModal() {
+        const selectedIds = getSelectedIds();
+        if (selectedIds.length === 0) { alert('請至少選取一個項目進行匯出。'); return; }
+        document.getElementById('export-modal').classList.add('active');
+    }
+
+    function closeExportModal() { document.getElementById('export-modal').classList.remove('active'); }
+
+    function confirmExport() {
+        const form = document.getElementById('history-form');
+        form.action = "{{ url_for('main.batch_download_zip') }}";
+        form.submit();
+        closeExportModal();
+    }
+
+    // ==========================================
+    // 3. 模型訓練 Modal 與 Loss 控制
+    // ==========================================
+    async function openTrainingModal() {
+        const selectedIds = getSelectedIds();
+        if (selectedIds.length === 0) { alert('請至少選取一個項目進行訓練。'); return; }
+        
+        const container = document.getElementById('hidden-upload-ids');
+        container.innerHTML = selectedIds.map(id => `<input type="hidden" name="upload_ids" value="${id}">`).join('');
+        
+        // 動態抓取標籤資料
+        try {
+            const resp = await fetch('/api/training/label_stats', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ upload_ids: selectedIds })
+            });
+            const data = await resp.json();
+            
+            const labelContainer = document.getElementById('label-settings-container');
+            const loadingStats = document.getElementById('loading-stats');
+
+            if (!data.success) {
+                loadingStats.textContent = '讀取失敗';
+                labelContainer.innerHTML = `<div style="color: red; text-align: center;">${data.error}</div>`;
+            } else if (data.stats && data.stats.length > 0) {
+                loadingStats.textContent = `共 ${data.stats.length} 個標籤`;
+                let html = '<div style="display: grid; gap: 0.8rem;">';
+                data.stats.forEach(stat => {
+                    html += `
+                        <div style="display: flex; align-items: center; justify-content: space-between; background: white; padding: 0.5rem 0.8rem; border-radius: 6px; border: 1px solid #e2e8f0;">
+                            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; flex: 1;">
+                                <input type="checkbox" name="train_labels" value="${stat.label_id}" checked>
+                                <span style="font-weight: 500;">${stat.label_name}</span>
+                                <span style="color: #64748b; font-size: 0.85rem;">(總數: ${stat.count})</span>
+                            </label>
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <span style="font-size: 0.85rem; color: #64748b;">抽樣筆數:</span>
+                                <input type="number" name="train_counts_${stat.label_id}" value="${stat.count}" min="1" max="${stat.count}" style="width: 80px; padding: 0.2rem 0.5rem; border-radius: 4px; border: 1px solid #cbd5e1;" required>
+                            </div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+                labelContainer.innerHTML = html;
+            } else {
+                loadingStats.textContent = '無可用標籤';
+                labelContainer.innerHTML = '<div style="color: #64748b; text-align: center;">此音檔無已標記的切片</div>';
+            }
+        } catch (e) {
+            console.error('Failed to fetch label stats:', e);
+            document.getElementById('loading-stats').textContent = '讀取異常';
+        }
+
+        document.getElementById('training-modal').classList.add('active');
+        const selectedOption = document.querySelector('.model-option.selected');
+        if(selectedOption) selectModel(selectedOption);
+    }
+
+    function closeTrainingModal() { document.getElementById('training-modal').classList.remove('active'); }
+
+    function selectModel(element) {
+        document.querySelectorAll('.model-option').forEach(opt => opt.classList.remove('selected'));
+        element.classList.add('selected');
+        
+        const radio = element.querySelector('input[type="radio"]');
+        if (radio) {
+            radio.checked = true;
+            const isYolo = radio.value.startsWith('yolo');
+            const lossGroup = document.getElementById('loss-function-group');
+            const chkCE = document.getElementById('chk_cross_entropy');
+            const chkBinary = document.getElementById('chk_focal_binary');
+            const chkMulti = document.getElementById('chk_focal_multi');
+
+            if (isYolo) {
+                if(chkBinary) chkBinary.disabled = true;
+                if(chkMulti) chkMulti.disabled = true;
+                if(chkCE) { chkCE.checked = true; chkCE.disabled = true; } 
+                toggleLoss('ce');
+                lossGroup.style.opacity = '0.5';
+                lossGroup.style.pointerEvents = 'none';
+            } else {
+                if(chkBinary) chkBinary.disabled = false;
+                if(chkMulti) chkMulti.disabled = false;
+                if(chkCE) chkCE.disabled = false;
+                lossGroup.style.opacity = '1';
+                lossGroup.style.pointerEvents = 'auto';
+            }
+        }
+    }
+
+    function toggleLoss(type) {
+        const lossDesc = document.getElementById('loss_description');
+        
+        if (type === 'ce') {
+            lossDesc.innerHTML = '👉 <strong>Cross Entropy Loss</strong>：標準交叉熵損失函數，適用於大多數分類任務。';
+            lossDesc.style.display = 'block';
+        } else if (type === 'binary') {
+            lossDesc.innerHTML = '👉 <strong>Binary Focal Loss</strong>：獨立判定類別，將每個類別當成2分類問題，增強對稀有特徵的敏感度。';
+            lossDesc.style.display = 'block';
+        } else if (type === 'multi') {
+            lossDesc.innerHTML = '👉 <strong>Multi-class Focal Loss</strong>：處理資料不平衡，強制模型關注少數樣本。';
+            lossDesc.style.display = 'block';
+        }
+    }
+
+    // ==========================================
+    // 4. Excel 匯入 Modal 控制
+    // ==========================================
+    function openImportModal() { document.getElementById('import-modal').classList.add('active'); }
+    function closeImportModal() { 
+        document.getElementById('import-modal').classList.remove('active'); 
+        document.getElementById('excelModalUploadInput').value = '';
+    }
+
+    async function submitImportExcel(event) {
+        event.preventDefault();
+        const files = document.getElementById('excelModalUploadInput').files;
+        if (files.length === 0) return;
+
+        const formData = new FormData();
+        for (let i = 0; i < files.length; i++) formData.append('files', files[i]);
+
+        const btn = document.getElementById('btnSubmitImport');
+        const originalText = btn.innerText;
+        btn.innerText = '匯入中...';
+        btn.disabled = true;
+
+        try {
+            const response = await fetch('/api/import_excel', { method: 'POST', body: formData });
+            const data = await response.json();
+            if (response.ok) {
+                let msg = `成功處理 ${data.success_count} 個檔案，共新增 ${data.total_labels} 個標記。\n`;
+                if (data.errors && data.errors.length > 0) msg += `\n錯誤/警告：\n${data.errors.join('\n')}`;
+                alert(msg);
+                location.reload();
+            } else {
+                alert(`匯入失敗: ${data.error}`);
+            }
+        } catch (err) {
+            alert('網路錯誤，無法匯入');
+        } finally {
+            btn.innerText = originalText;
+            btn.disabled = false;
+        }
+    }
+
+    // ==========================================
+    // 5. 輪詢 Polling 更新進度條機制
+    // ==========================================
+    const activeIntervals = new Map();
+
+    function initPolling() {
+        const configDiv = document.getElementById('data-config');
+        const newUploadId = configDiv ? configDiv.dataset.newUploadId : null;
+
+        if (newUploadId) {
+            const newRow = document.getElementById(`upload-row-${newUploadId}`);
+            if (newRow) {
+                const statusCell = newRow.querySelector('.status-cell');
+                const statusBadge = statusCell.querySelector('.status-badge');
+                if (statusBadge && statusBadge.textContent.trim() === 'PENDING') {
+                    statusCell.innerHTML = `
+                        <div style="width: 120px; background: #eee; height: 8px; border-radius: 4px; overflow: hidden; position: relative;">
+                            <div class="progress-bar" style="width: 0%; background: var(--highlight); height: 100%; transition: width 0.4s;"></div>
+                        </div>
+                        <small class="progress-text" style="color: var(--primary-med);">0%</small>
+                    `;
+                }
+                startPolling(newUploadId);
+            }
+        }
+
+        const rowsToUpdate = document.querySelectorAll('tr[id^="upload-row-"]');
+        rowsToUpdate.forEach(row => {
+            const uploadId = row.id.split('-')[2];
+            if (uploadId === newUploadId) return; 
+
+            const statusCell = row.querySelector('.status-cell');
+            if (statusCell.querySelector('.progress-bar') || (statusCell.textContent.includes('PENDING'))) {
+                startPolling(uploadId);
+            }
+        });
+    }
+
+    function startPolling(uploadId) {
+        if (activeIntervals.has(uploadId)) return;
+        const intervalId = setInterval(() => {
+            fetch(`/api/upload/${uploadId}/status`)
+                .then(response => {
+                    if (!response.ok) throw new Error('Network error');
+                    return response.json();
+                })
+                .then(data => updateRow(data))
+                .catch(error => stopPolling(uploadId));
+        }, 2000);
+        activeIntervals.set(uploadId, intervalId);
+    }
+
+    function stopPolling(uploadId) {
+        if (activeIntervals.has(uploadId)) {
+            clearInterval(activeIntervals.get(uploadId));
+            activeIntervals.delete(uploadId);
+        }
+    }
+
+    function updateRow(data) {
+        const row = document.getElementById(`upload-row-${data.id}`);
+        if (!row) return;
+
+        const statusCell = row.querySelector('.status-cell');
+
+        if (data.status === 'PROCESSING' || data.status === 'PENDING') {
+            let progressBar = statusCell.querySelector('.progress-bar');
+            let progressText = statusCell.querySelector('.progress-text');
+
+            if (!progressBar) {
+                statusCell.innerHTML = `
+                    <div style="width: 120px; background: #eee; height: 8px; border-radius: 4px; overflow: hidden; position: relative;">
+                        <div class="progress-bar" style="width: ${data.progress}%; background: var(--highlight); height: 100%; transition: width 0.4s;"></div>
+                    </div>
+                    <small class="progress-text" style="color: var(--primary-med);">${data.progress}%</small>
+                `;
+            } else {
+                progressBar.style.width = `${data.progress}%`;
+                if (progressText) progressText.textContent = `${data.progress}%`;
+            }
+        } else {
+            stopPolling(data.id);
+            statusCell.innerHTML = `<span class="status-badge status-${data.status}">${data.status}</span>`;
+            if (data.status === 'COMPLETED') {
+                const actionCell = row.querySelector('.action-cell');
+                actionCell.innerHTML = `<a href="/results/${data.id}" class="btn btn-secondary" style="padding: 4px 10px; font-size: 0.85rem;">查看結果</a>`;
+            }
+        }
+    }
+
+    // 點擊 Modal 外部關閉
+    document.querySelectorAll('.modal-overlay').forEach(modal => {
+        modal.addEventListener('click', function(e) {
+            if (e.target === this) {
+                this.classList.remove('active');
+            }
+        });
+    });
+</script>
+
+<style>
+    /* Modal 樣式 */
+    .modal-overlay {
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 1000;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal-content { 
+        background: white; padding: 2rem; border-radius: 8px; max-width: 600px; width: 90%; 
+        max-height: 90vh; overflow-y: auto; position: relative; 
+    }
+    .model-option {
+        border: 2px solid #eee; padding: 1rem; border-radius: 8px; cursor: pointer; transition: all 0.2s;
+    }
+    .model-option:hover { border-color: var(--primary-light); }
+    .model-option.selected { border-color: var(--primary); background: #f0f7ff; }
+    .model-option input { display: none; }
+    .model-option-header { font-weight: bold; margin-bottom: 0.25rem; }
+    .model-option-desc { font-size: 0.85rem; color: #666; }
+
+    /* Grid Layout for Forms */
+    .custom-grid-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1.5rem;
+    }
+
+    /* 選取框與游標樣式 */
+    body { cursor: default; }
+    body:has(#drag-selector) { cursor: crosshair; }
+    .data-table tr { transition: background 0.2s; }
+    .data-table tr:hover { background: #f8fafc; }
+    .upload-checkbox { cursor: pointer; transform: scale(1.2); }
+</style>
+{% endblock %}

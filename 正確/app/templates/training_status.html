@@ -1,0 +1,263 @@
+{% extends "base.html" %}
+
+{% block title %}模型訓練狀態 - OceanAI{% endblock %}
+
+{% block extra_css %}
+@keyframes progress-stripe {
+from { background-position: 20px 0; }
+to { background-position: 0 0; }
+}
+{% endblock %}
+
+{% block content %}
+<div class="container-card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+        <h1>模型訓練任務</h1>
+        <a href="{{ url_for('main.history') }}" class="btn btn-secondary">返回分析歷史</a>
+    </div>
+
+    <form id="training-form" method="post">
+        <div style="overflow-x: auto;">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th width="40"><input type="checkbox" onclick="toggleAll(this)"></th>
+                        <th width="80">任務 ID</th>
+                        <th>開始時間</th>
+                        <th>參數摘要</th>
+                        <th>狀態</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for run in runs %}
+                    {% set params = run.get_params() %}
+                    <tr id="run-row-{{ run.id }}">
+                        <td><input type="checkbox" name="run_ids" value="{{ run.id }}" class="run-checkbox"></td>
+                        <td><strong>#{{ run.id }}</strong></td>
+                        <td>{{ run.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                        <td style="font-size: 0.85rem;">
+                            <div style="display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
+                                <span
+                                    style="background: #e0e7ff; color: #4338ca; padding: 3px 8px; border-radius: 6px; font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
+                                    [模型] {{ run.get_model_display_name() }}
+                                </span>
+                                <span
+                                    style="background: #f8fafc; color: #475569; padding: 3px 8px; border-radius: 6px; border: 1px solid #e2e8f0;"
+                                    title="訓練輪數">
+                                    [輪數] {{ params.get('epochs', 50) }}
+                                </span>
+                                <span
+                                    style="background: #f8fafc; color: #475569; padding: 3px 8px; border-radius: 6px; border: 1px solid #e2e8f0;"
+                                    title="批次大小">
+                                    [批次] {{ params.get('batch_size', 16) }}
+                                </span>
+                                <span
+                                    style="background: #f8fafc; color: #475569; padding: 3px 8px; border-radius: 6px; border: 1px solid #e2e8f0;"
+                                    title="圖片尺寸">
+                                    [尺寸] {{ params.get('image_size', 224) }}px
+                                </span>
+                                {% if params.get('loss_function') == 'focal_loss_multi_class' %}
+                                <span
+                                    style="background: #fdf2f8; color: #db2777; padding: 3px 8px; border-radius: 6px; border: 1px solid #fbcfe8;"
+                                    title="使用 Multi-class Focal Loss">
+                                    [Loss] Multi-class Focal
+                                </span>
+                                {% elif params.get('loss_function') == 'focal_loss_binary' %}
+                                <span
+                                    style="background: #eef2ff; color: #4f46e5; padding: 3px 8px; border-radius: 6px; border: 1px solid #c7d2fe;"
+                                    title="使用 Binary Focal Loss">
+                                    [Loss] Binary Focal
+                                </span>
+                                {% elif params.get('use_focal_loss') %}
+                                <span
+                                    style="background: #fdf2f8; color: #db2777; padding: 3px 8px; border-radius: 6px; border: 1px solid #fbcfe8;">
+                                    [Loss] Focal Loss
+                                </span>
+                                {% endif %}
+                            </div>
+                        </td>
+                        <td class="status-cell">
+                            {% if run.status == 'RUNNING' or run.status == 'PENDING' %}
+                            <div
+                                style="width: 120px; background: #e2e8f0; height: 10px; border-radius: 5px; overflow: hidden; position: relative; box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);">
+                                <div class="progress-bar"
+                                    style="width: {{ run.progress }}%; background: linear-gradient(90deg, var(--primary-light), var(--primary-med)); height: 100%; transition: width 0.4s ease-out; position: relative; overflow: hidden;">
+                                    <div
+                                        style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(45deg, rgba(255,255,255,0.2) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.2) 50%, rgba(255,255,255,0.2) 75%, transparent 75%, transparent); background-size: 20px 20px; animation: progress-stripe 1s linear infinite;">
+                                    </div>
+                                </div>
+                            </div>
+                            <small class="progress-text"
+                                style="color: var(--primary-med); font-weight: 600; margin-top: 4px; display: block;">{{
+                                run.progress }}%</small>
+                            {% else %}
+                            <span class="status-badge status-{{ run.status }}">{{ run.status }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="action-cell">
+                            {% if run.status == 'SUCCESS' %}
+                            <a href="{{ url_for('main.training_report', run_id=run.id) }}" class="btn btn-secondary"
+                                style="padding: 4px 10px; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 4px;">
+                                查看報告
+                            </a>
+                            <a href="{{ url_for('static', filename=run.results_path + '/weights/best.pt') }}"
+                                class="btn btn-primary"
+                                style="padding: 4px 10px; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 4px;"
+                                download>
+                                下載模型
+                            </a>
+                            {% elif run.status == 'FAILURE' %}
+                            <span style="color: var(--highlight); font-weight: 600;">訓練失敗</span>
+                            {% else %}
+                            <span style="color: #cbd5e1;">--</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="6" style="text-align: center; padding: 4rem 2rem;">
+                            <div style="color: #94a3b8; margin-bottom: 1rem; font-size: 2rem;">[無紀錄]</div>
+                            <h3 style="color: var(--text-dark); margin-bottom: 0.5rem;">目前沒有訓練紀錄</h3>
+                            <a href="{{ url_for('main.history') }}" class="btn btn-primary"
+                                style="padding: 0.75rem 1.5rem;">
+                                前往歷史紀錄建立訓練
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div style="margin-top: 2rem; text-align: right;">
+            <button type="button" class="btn btn-danger" onclick="submitDeletion()">刪除選取項目</button>
+        </div>
+    </form>
+</div>
+
+<div id="data-config" data-new-run-id="{{ request.args.get('new_run_id') }}"></div>
+
+<script>
+    // 全選功能
+    function toggleAll(source) {
+        const checkboxes = document.getElementsByClassName('run-checkbox');
+        for (let i = 0; i < checkboxes.length; i++) {
+            checkboxes[i].checked = source.checked;
+        }
+    }
+
+    // 刪除功能
+    function submitDeletion() {
+        const selectedIds = Array.from(document.querySelectorAll('.run-checkbox:checked')).map(cb => cb.value);
+        if (selectedIds.length === 0) {
+            alert('請至少選取一個項目進行刪除。');
+            return;
+        }
+        if (confirm(`確定要刪除選取的 ${selectedIds.length} 個訓練任務嗎？`)) {
+            const form = document.getElementById('training-form');
+            form.action = "{{ url_for('main.delete_selected_runs') }}";
+            form.submit();
+        }
+    }
+
+    // --- 動態進度條邏輯 (Auto Polling) ---
+    document.addEventListener('DOMContentLoaded', () => {
+        const activeIntervals = new Map();
+        const configDiv = document.getElementById('data-config');
+        const newRunId = configDiv ? configDiv.dataset.newRunId : null;
+
+        // 1. 如果有新建立的任務，立即開始追蹤
+        if (newRunId) {
+            const newRow = document.getElementById(`run-row-${newRunId}`);
+            if (newRow) {
+                initProgressBar(newRow); // 確保顯示進度條樣式
+                startPolling(newRunId);
+            }
+        }
+
+        // 2. 掃描現有頁面，對所有還在跑的任務 (有 progress-bar 的) 啟動追蹤
+        document.querySelectorAll('tr[id^="run-row-"]').forEach(row => {
+            const runId = row.id.split('-')[2];
+            if (runId === newRunId) return; // 已經處理過了
+
+            if (row.querySelector('.progress-bar')) {
+                startPolling(runId);
+            }
+        });
+
+        // 啟動輪詢
+        function startPolling(runId) {
+            if (activeIntervals.has(runId)) return;
+
+            // 每 2 秒詢問一次 API
+            const intervalId = setInterval(() => {
+                fetch(`/api/training/${runId}/status`)
+                    .then(response => response.ok ? response.json() : Promise.reject())
+                    .then(data => updateRow(data))
+                    .catch(() => stopPolling(runId)); // 發生錯誤就停止，避免無限報錯
+            }, 2000);
+
+            activeIntervals.set(runId, intervalId);
+        }
+
+        // 停止輪詢
+        function stopPolling(runId) {
+            if (activeIntervals.has(runId)) {
+                clearInterval(activeIntervals.get(runId));
+                activeIntervals.delete(runId);
+            }
+        }
+
+        // 確保列顯示為進度條模式 (用於剛建立任務時)
+        function initProgressBar(row) {
+            const statusCell = row.querySelector('.status-cell');
+            if (!statusCell.querySelector('.progress-bar')) {
+                statusCell.innerHTML = `
+                    <div style="width: 120px; background: #eee; height: 8px; border-radius: 4px; overflow: hidden; position: relative;">
+                        <div class="progress-bar" style="width: 0%; background: var(--highlight); height: 100%; transition: width 0.4s;"></div>
+                    </div>
+                    <small class="progress-text" style="color: var(--primary-med);">0%</small>
+                `;
+            }
+        }
+
+        // 更新畫面資料
+        function updateRow(data) {
+            const row = document.getElementById(`run-row-${data.id}`);
+            if (!row) return;
+
+            const statusCell = row.querySelector('.status-cell');
+
+            // 如果還在跑 (RUNNING 或 PENDING)
+            if (data.status === 'RUNNING' || data.status === 'PENDING') {
+                initProgressBar(row); // 確保結構存在
+
+                const progressBar = statusCell.querySelector('.progress-bar');
+                const progressText = statusCell.querySelector('.progress-text');
+
+                if (progressBar) progressBar.style.width = `${data.progress}%`;
+                if (progressText) progressText.textContent = `${data.progress}%`;
+            } else {
+                // 任務結束，停止輪詢並更新為結果按鈕
+                stopPolling(data.id);
+
+                // 1. 更新狀態標籤
+                statusCell.innerHTML = `<span class="status-badge status-${data.status}">${data.status}</span>`;
+
+                // 2. 更新操作按鈕
+                const actionCell = row.querySelector('.action-cell');
+                if (data.status === 'SUCCESS') {
+                    // 使用 JS 動態生成 HTML
+                    actionCell.innerHTML = `
+                        <a href="/training/report/${data.id}" class="btn btn-secondary" style="padding: 4px 10px; font-size: 0.85rem;">查看報告</a>
+                        <a href="/static/training_runs/${data.id}/train_results/weights/best.pt" class="btn btn-primary" style="padding: 4px 10px; font-size: 0.85rem;" download>下載模型</a>
+                    `;
+                } else if (data.status === 'FAILURE') {
+                    actionCell.innerHTML = '<span style="color: var(--highlight);">訓練失敗</span>';
+                }
+            }
+        }
+    });
+</script>
+{% endblock %}

@@ -1,0 +1,378 @@
+{% extends "base.html" %}
+
+{% block title %}音訊上傳 - OceanAI{% endblock %}
+
+{% block content %}
+<div class="container-card" style="max-width: 700px; margin: 0 auto;">
+    <div style="text-align: center; margin-bottom: 2rem;">
+        <h1>音訊檔案上傳</h1>
+        <p style="color: var(--text-light);">請上傳海洋生物錄音檔 (.wav, .mp3)，系統將自動進行頻譜分析。</p>
+    </div>
+
+    <form method="post" action="{{ url_for('main.upload') }}" enctype="multipart/form-data">
+        <div class="form-group">
+            <label>選擇上傳方式</label>
+            <div class="upload-mode-tabs">
+                <button type="button" class="upload-tab active" data-mode="file" onclick="switchUploadMode('file')">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
+                        <polyline points="13 2 13 9 20 9"></polyline>
+                    </svg>
+                    檔案上傳
+                </button>
+                <button type="button" class="upload-tab" data-mode="folder" onclick="switchUploadMode('folder')">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                    </svg>
+                    資料夾上傳
+                </button>
+            </div>
+
+            <div id="fileUploadArea">
+                <input type="file" id="files" name="files" accept=".wav,.mp3" required multiple
+                    style="padding: 1rem; border: 2px dashed #cbd5e1; background: #f8fafc;">
+            </div>
+
+            <div id="folderUploadArea" style="display: none;">
+                <input type="file" id="folderInput" accept=".wav,.mp3" webkitdirectory directory multiple
+                    style="padding: 1rem; border: 2px dashed #cbd5e1; background: #f8fafc;">
+                <p style="margin-top: 0.5rem; font-size: 0.85rem; color: var(--text-light);">
+                    系統將自動篩選資料夾中的音訊檔案 (.wav, .mp3)
+                </p>
+            </div>
+
+            <div id="fileList" class="file-list-preview"></div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+            <div class="form-group">
+                <label for="sample_rate">取樣率 (Sample Rate)</label>
+                <select id="sample_rate" name="sample_rate">
+                    <option value="None">使用原始設定</option>
+                    <option value="4000">4,000 Hz</option>
+                    <option value="16000">16,000 Hz</option>
+                    <option value="32000">32,000 Hz</option>
+                    <option value="64000">64,000 Hz</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="channels">聲道 (Channels)</label>
+                <select id="channels" name="channels">
+                    <option value="mono">單聲道 (Mono)</option>
+                    <option value="stereo">雙聲道 (Stereo)</option>
+                </select>
+            </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+            <div class="form-group">
+                <label for="segment_duration">切割長度 (秒)</label>
+                <input type="number" id="segment_duration" name="segment_duration" step="0.1" value="2.0" required>
+            </div>
+            <div class="form-group">
+                <label for="overlap">重疊率 (%)</label>
+                <input type="number" id="overlap" name="overlap" min="0" max="99" value="50" required>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label for="spec_type">頻譜圖類型</label>
+            <select id="spec_type" name="spec_type">
+                <option value="yamnet_log_mel">Mel Spectrogram</option>
+                <option value="stft">STFT (短時距傅立葉)</option>
+                <option value="classic_demon">DEMON 二維頻譜圖</option>
+                <option value="envelope_spectrum">包絡線頻譜分析</option>
+            </select>
+        </div>
+
+        <!-- 頻譜圖進階參數設定 -->
+        <div class="spectrogram-params-section" id="specParamsSection">
+            <div class="params-header" onclick="toggleSpecParams()">
+                <span class="params-title">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path
+                            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
+                        </path>
+                    </svg>
+                    <span id="paramsHeaderTitle">頻譜圖進階參數</span>
+                </span>
+                <span class="params-toggle" id="toggleIcon">▼</span>
+            </div>
+            <div class="params-content" id="specParamsContent">
+                <p class="params-description" id="paramsDescription">調整頻譜分析的進階參數，可影響頻譜圖的解析度與精確度。</p>
+
+                <!-- FFT Window Size & Hop Length - 適用於 stft -->
+                <div class="param-row" data-spec-types="yamnet_log_mel,stft"
+                    style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+                    <div class="form-group" data-spec-types="stft">
+                        <label for="n_fft">FFT Window Size (n_fft)</label>
+                        <select id="n_fft" name="n_fft">
+                            <option value="256">256</option>
+                            <option value="512">512</option>
+                            <option value="1024" selected>1024</option>
+                            <option value="2048">2048</option>
+                            <option value="4096">4096</option>
+                        </select>
+                        <span class="param-hint">較大值提供更高頻率解析度，但時間解析度較低</span>
+                    </div>
+                    <div class="form-group" data-spec-types="yamnet_log_mel,stft">
+                        <label for="window_overlap">Window Overlap (窗口重疊率 %)</label>
+                        <input type="number" id="window_overlap" name="window_overlap" value="50" min="0" max="99"
+                            step="1">
+                        <span class="param-hint">建議範圍 25-90%，較高重疊率提供更平滑的時間軸</span>
+                    </div>
+                </div>
+
+                <!-- Window Type - 適用於 stft -->
+                <div class="param-row" data-spec-types="stft"
+                    style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+                    <div class="form-group">
+                        <label for="window_type">Window Type (窗函數)</label>
+                        <select id="window_type" name="window_type">
+                            <option value="hann" selected>Hann (漢寧窗)</option>
+                            <option value="hamming">Hamming (漢明窗)</option>
+                            <option value="blackman">Blackman (布萊克曼窗)</option>
+                            <option value="bartlett">Bartlett (巴特利特窗)</option>
+                            <option value="kaiser">Kaiser (凱撒窗)</option>
+                            <option value="rectangular">Rectangular (矩形窗)</option>
+                        </select>
+                        <span class="param-hint">不同窗函數影響頻譜洩漏特性</span>
+                    </div>
+
+                    <!-- Power - 適用於 stft -->
+                    <div class="form-group" data-spec-types="stft">
+                        <label for="power">功率指數</label>
+                        <select id="power" name="power">
+                            <option value="1.0">1.0 (幅度頻譜)</option>
+                            <option value="2.0" selected>2.0 (功率頻譜)</option>
+                        </select>
+                        <span class="param-hint">1.0 為幅度頻譜，2.0 為功率頻譜</span>
+                    </div>
+                </div>
+
+
+
+                <!-- 無可調整參數的提示 - 適用於 classic_demon, envelope_spectrum -->
+                <div class="param-row no-params-notice"
+                    data-spec-types="classic_demon,envelope_spectrum">
+                    <div class="no-params-box">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="12" y1="16" x2="12" y2="12"></line>
+                            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                        </svg>
+                        <span id="noParamsText">此頻譜圖類型使用預設參數，無需額外調整。</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div style="margin-top: 2rem;">
+            <button type="submit" class="btn btn-primary" style="width: 100%;">
+                <span style="font-size: 1.2rem;">開始分析</span>
+            </button>
+        </div>
+    </form>
+</div>
+
+<script>
+    // --- 上傳模式切換 ---
+    let currentUploadMode = 'file';
+
+    function switchUploadMode(mode) {
+        currentUploadMode = mode;
+        const fileArea = document.getElementById('fileUploadArea');
+        const folderArea = document.getElementById('folderUploadArea');
+        const fileInput = document.getElementById('files');
+        const folderInput = document.getElementById('folderInput');
+        const fileListDiv = document.getElementById('fileList');
+
+        // 切換 Tab 樣式
+        document.querySelectorAll('.upload-tab').forEach(tab => {
+            tab.classList.toggle('active', tab.getAttribute('data-mode') === mode);
+        });
+
+        // 清除預覽
+        fileListDiv.innerHTML = '';
+
+        if (mode === 'file') {
+            fileArea.style.display = '';
+            folderArea.style.display = 'none';
+            // 讓 file input 成為表單提交的欄位
+            fileInput.name = 'files';
+            fileInput.required = true;
+            folderInput.removeAttribute('name');
+            folderInput.required = false;
+            // 清除資料夾選擇
+            folderInput.value = '';
+            // 移除動態產生的隱藏 input
+            removeHiddenFileInputs();
+        } else {
+            fileArea.style.display = 'none';
+            folderArea.style.display = '';
+            // 讓 folder input 先不設 name (稍後由隱藏 input 處理)
+            folderInput.removeAttribute('name');
+            folderInput.required = false;
+            fileInput.name = '';
+            fileInput.required = false;
+            // 清除檔案選擇
+            fileInput.value = '';
+            // 移除動態產生的隱藏 input
+            removeHiddenFileInputs();
+        }
+    }
+
+    function removeHiddenFileInputs() {
+        document.querySelectorAll('.hidden-folder-file').forEach(el => el.remove());
+    }
+
+    // 音訊檔副檔名判斷
+    const AUDIO_EXTENSIONS = ['.wav', '.mp3'];
+
+    function isAudioFile(filename) {
+        const ext = filename.toLowerCase().substring(filename.lastIndexOf('.'));
+        return AUDIO_EXTENSIONS.includes(ext);
+    }
+
+    // 共用的檔案預覽函式
+    function renderFilePreview(fileListDiv, files, skippedCount) {
+        fileListDiv.innerHTML = '';
+        if (files.length === 0 && skippedCount === 0) return;
+
+        const listTitle = document.createElement('div');
+        listTitle.className = 'file-list-title';
+        let titleText = '<strong>' + files.length + ' 個音訊檔案</strong>';
+        if (skippedCount > 0) {
+            titleText += '<span style="color: var(--text-light); font-size: 0.85rem; margin-left: 0.5rem;">'
+                + '(' + skippedCount + ' 個非音訊檔案已略過)</span>';
+        }
+        listTitle.innerHTML = titleText;
+        fileListDiv.appendChild(listTitle);
+
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            const fileItem = document.createElement('div');
+            fileItem.className = 'file-list-item';
+            const sizeMB = (file.size / 1024 / 1024).toFixed(2);
+            const iconSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'
+                + '<path d="M9 18V5l12-2v13"></path>'
+                + '<circle cx="6" cy="18" r="3"></circle>'
+                + '<circle cx="18" cy="16" r="3"></circle>'
+                + '</svg>';
+            // 如果有 webkitRelativePath，顯示相對路徑
+            const displayName = file.webkitRelativePath || file.name;
+            fileItem.innerHTML = '<span class="file-icon">' + iconSvg + '</span>'
+                + '<span class="file-name">' + displayName + '</span>'
+                + '<span class="file-size">' + sizeMB + ' MB</span>';
+            fileListDiv.appendChild(fileItem);
+        }
+    }
+
+    // 頻譜圖參數區塊展開/收合功能
+    function toggleSpecParams() {
+        const content = document.getElementById('specParamsContent');
+        const icon = document.getElementById('toggleIcon');
+        content.classList.toggle('collapsed');
+        icon.classList.toggle('collapsed');
+    }
+
+    // 頻譜類型對應的說明文字
+    const specTypeDescriptions = {
+        'yamnet_log_mel': '使用固定參數 (16kHz, 64 Mel bands) 進行特徵提取，您可以調整窗口重疊率。',
+        'stft': '調整短時距傅立葉頻譜的進階參數。',
+        'classic_demon': 'DEMON 頻譜使用預設參數 (2-7.5kHz 帶通濾波)。',
+        'envelope_spectrum': '包絡線頻譜使用預設參數進行分析。'
+    };
+
+    // 根據頻譜類型動態顯示/隱藏相關參數
+    document.addEventListener('DOMContentLoaded', function () {
+        const specTypeSelect = document.getElementById('spec_type');
+        const paramsSection = document.getElementById('specParamsSection');
+        const paramsDescription = document.getElementById('paramsDescription');
+        const paramRows = document.querySelectorAll('.param-row');
+        // 選取所有有 data-spec-types 屬性的 form-group 元素（嵌套在 row 內的獨立控制項目）
+        const paramItems = document.querySelectorAll('.form-group[data-spec-types]');
+
+        function updateParamsVisibility() {
+            const specType = specTypeSelect.value;
+
+            // 更新說明文字
+            paramsDescription.textContent = specTypeDescriptions[specType] || specTypeDescriptions['mel'];
+
+            // 更新參數列的可見性
+            paramRows.forEach(row => {
+                const allowedTypes = row.getAttribute('data-spec-types');
+                if (allowedTypes) {
+                    const types = allowedTypes.split(',');
+                    const shouldShow = types.includes(specType);
+                    row.style.display = shouldShow ? '' : 'none';
+                }
+            });
+
+            // 更新單獨參數項目的可見性 (嵌套在 row 內的)
+            paramItems.forEach(item => {
+                const allowedTypes = item.getAttribute('data-spec-types');
+                if (allowedTypes) {
+                    const types = allowedTypes.split(',');
+                    const shouldShow = types.includes(specType);
+                    // 徹底隱藏，不保留空間
+                    item.style.display = shouldShow ? 'block' : 'none';
+                }
+            });
+        }
+
+        specTypeSelect.addEventListener('change', updateParamsVisibility);
+        updateParamsVisibility();
+
+        // --- 檔案上傳：多檔案選擇預覽 ---
+        const filesInput = document.getElementById('files');
+        const fileListDiv = document.getElementById('fileList');
+
+        filesInput.addEventListener('change', function () {
+            const files = Array.from(this.files);
+            renderFilePreview(fileListDiv, files, 0);
+        });
+
+        // --- 資料夾上傳：檔案篩選與預覽 ---
+        const folderInput = document.getElementById('folderInput');
+        const form = document.querySelector('form');
+
+        folderInput.addEventListener('change', function () {
+            removeHiddenFileInputs();
+            const allFiles = Array.from(this.files);
+            const audioFiles = allFiles.filter(f => isAudioFile(f.name));
+            const skippedCount = allFiles.length - audioFiles.length;
+
+            renderFilePreview(fileListDiv, audioFiles, skippedCount);
+
+            // 使用 DataTransfer 建立篩選後的檔案列表，透過隱藏 input 提交
+            if (audioFiles.length > 0) {
+                const dt = new DataTransfer();
+                audioFiles.forEach(f => dt.items.add(f));
+                const hiddenInput = document.createElement('input');
+                hiddenInput.type = 'file';
+                hiddenInput.name = 'files';
+                hiddenInput.multiple = true;
+                hiddenInput.files = dt.files;
+                hiddenInput.style.display = 'none';
+                hiddenInput.className = 'hidden-folder-file';
+                form.appendChild(hiddenInput);
+            }
+        });
+
+        // 表單提交前驗證
+        form.addEventListener('submit', function (e) {
+            if (currentUploadMode === 'folder') {
+                const hiddenInputs = document.querySelectorAll('.hidden-folder-file');
+                if (hiddenInputs.length === 0 || hiddenInputs[0].files.length === 0) {
+                    e.preventDefault();
+                    alert('請選擇一個包含音訊檔案 (.wav, .mp3) 的資料夾');
+                    return false;
+                }
+            }
+        });
+    });
+</script>
+{% endblock %}

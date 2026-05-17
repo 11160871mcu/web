@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+
+{% block title %}分析結果 - OceanAI{% endblock %}
+
+{% block content %}
+<div class="container-card">
+    <div style="border-bottom: 1px solid #eee; padding-bottom: 1.5rem; margin-bottom: 1.5rem; text-align: center;">
+        <h1>分析結果詳情</h1>
+        <div style="color: var(--text-light); font-size: 0.95rem;">
+            <p style="margin: 0.5rem 0;"><strong>原始檔案：</strong> {{ upload.original_filename }}</p>
+            <p style="margin: 0.5rem 0;"><strong>分析時間：</strong> {{ upload.upload_timestamp.strftime('%Y-%m-%d %H:%M') }}
+            </p>
+            <p style="margin: 0.5rem 0;"><strong>切片總數：</strong> {{ pagination.total }} 筆</p>
+        </div>
+    </div>
+
+    <div style="display: flex; justify-content: center; gap: 1rem; margin-bottom: 2rem; flex-wrap: wrap;">
+        <a href="{{ url_for('main.history') }}" class="btn btn-secondary">返回歷史紀錄</a>
+        <a href="{{ url_for('main.index') }}" class="btn btn-secondary">上傳新檔案</a>
+
+        <a href="{{ url_for('main.download_dataset_zip', upload_id=upload.id) }}" class="btn btn-primary">
+            下載訓練資料集
+        </a>
+        <a href="{{ url_for('main.labeling_page', upload_id=upload.id) }}" class="btn"
+            style="background-color: #10b981; color: white;">
+            進入標記模式
+        </a>
+    </div>
+
+    <!-- 分析參數資訊區塊 -->
+    <details class="params-info-section">
+        <summary class="params-info-header">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="16" x2="12" y2="12"></line>
+                <line x1="12" y1="8" x2="12.01" y2="8"></line>
+            </svg>
+            <span>查看分析參數設定</span>
+        </summary>
+        <div class="params-info-content">
+            <div class="params-grid">
+                <div class="param-group">
+                    <h4>基本設定</h4>
+                    <div class="param-item">
+                        <span class="param-label">頻譜圖類型</span>
+                        <span class="param-value">{{ params.get('spec_type', 'mel') }}</span>
+                    </div>
+                    <div class="param-item">
+                        <span class="param-label">取樣率</span>
+                        <span class="param-value">{{ params.get('sample_rate', '原始') }} Hz</span>
+                    </div>
+                    <div class="param-item">
+                        <span class="param-label">聲道</span>
+                        <span class="param-value">{{ '單聲道' if params.get('channels', 'mono') == 'mono' else '雙聲道'
+                            }}</span>
+                    </div>
+                </div>
+                <div class="param-group">
+                    <h4>切割設定</h4>
+                    <div class="param-item">
+                        <span class="param-label">切割長度</span>
+                        <span class="param-value">{{ params.get('segment_duration', 2.0) }} 秒</span>
+                    </div>
+                    <div class="param-item">
+                        <span class="param-label">片段重疊率</span>
+                        <span class="param-value">{{ params.get('overlap', 50) }}%</span>
+                    </div>
+                </div>
+                <div class="param-group">
+                    <h4>頻譜圖參數</h4>
+                    <div class="param-item">
+                        <span class="param-label">FFT Window Size</span>
+                        <span class="param-value">{{ params.get('n_fft', 1024) }}</span>
+                    </div>
+                    <div class="param-item">
+                        <span class="param-label">Window Overlap</span>
+                        <span class="param-value">{{ params.get('window_overlap', 50) }}%</span>
+                    </div>
+                    <div class="param-item">
+                        <span class="param-label">窗函數</span>
+                        <span class="param-value">{{ params.get('window_type', 'hann') }}</span>
+                    </div>
+                    {% if params.get('spec_type') == 'mel' %}
+                    <div class="param-item">
+                        <span class="param-label">Mel 濾波器數</span>
+                        <span class="param-value">{{ params.get('n_mels', 128) }}</span>
+                    </div>
+                    <div class="param-item">
+                        <span class="param-label">頻率範圍</span>
+                        <span class="param-value">{{ params.get('f_min', 0) }} - {{ params.get('f_max', 0) if
+                            params.get('f_max', 0) > 0 else 'Nyquist' }} Hz</span>
+                    </div>
+                    {% endif %}
+                    <div class="param-item">
+                        <span class="param-label">功率指數</span>
+                        <span class="param-value">{{ params.get('power', 2.0) }}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </details>
+
+    <div style="overflow-x: auto;">
+        <table class="data-table result-table">
+            <thead>
+                <tr>
+                    <th style="width: 80px;">編號</th>
+                    <th style="width: 120px;">起始時間</th>
+                    <th style="width: 350px;">音訊片段</th>
+                    <th>頻譜圖表</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in pagination.items %}
+                <tr>
+                    <td><strong>#{{ (pagination.page - 1) * pagination.per_page + loop.index }}</strong></td>
+                    <td style="font-family: 'Consolas', monospace; font-size: 1.1em; color: var(--primary-dark);">
+                        {% set start_time = (loop.index0 + (pagination.page - 1) * pagination.per_page) *
+                        hop_length_seconds %}
+                        {% set minutes = (start_time / 60) | int %}
+                        {% set seconds = start_time % 60 %}
+                        {{ "%02d:%06.3f" | format(minutes, seconds) }}
+                    </td>
+                    <td>
+                        {% if item.audio_url %}
+                        <audio controls controlsList="nodownload" style="width: 100%;">
+                            <source src="{{ url_for('static', filename=item.audio_url) }}" type="audio/wav">
+                            瀏覽器不支援播放
+                        </audio>
+                        {% else %}
+                        <span style="color: #999; font-size: 0.9rem;">(無音訊)</span>
+                        {% endif %}
+                    </td>
+                    <td class="spectrogram-cell">
+                        <img src="{{ url_for('static', filename=item.spectrogram_url) }}" alt="頻譜圖">
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div style="display: flex; justify-content: center; gap: 5px; margin-top: 2rem;">
+        {% if pagination.has_prev %}
+        <a href="{{ url_for('main.results', upload_id=upload.id, page=pagination.prev_num) }}" class="btn btn-secondary"
+            style="padding: 5px 12px;">上一頁</a>
+        {% endif %}
+
+            <span style="font-size: 1rem; color: var(--text-main); margin: 0 10px; display: flex; align-items: center; gap: 5px;">
+                第 
+                <input type="number" value="{{ pagination.page }}" min="1" max="{{ pagination.pages }}"
+                    style="width: 60px; text-align: center; border: 1px solid #ccc; border-radius: 4px; padding: 4px;"
+                    onkeydown="if(event.key === 'Enter') { let u = new URL(window.location.href); u.searchParams.set('page', this.value); window.location.href = u.href; }"
+                    onchange="let u = new URL(window.location.href); u.searchParams.set('page', this.value); window.location.href = u.href;"> 
+                頁 / 共 {{ pagination.pages }} 頁
+            </span>
+
+        {% if pagination.has_next %}
+        <a href="{{ url_for('main.results', upload_id=upload.id, page=pagination.next_num) }}" class="btn btn-secondary"
+            style="padding: 5px 12px;">下一頁</a>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
