@@ -177,9 +177,21 @@ def import_excel():
                 excel_core_id = sheet_name.strip()
 
                 # --- 2. 配對資料庫中的音檔 ---
+                # 先用完整 core_id 配對，找不到時去掉末尾 _數字 後綴再試一次
                 target_audios = AudioInfo.query.filter(
                     AudioInfo.file_name.ilike(f"%{excel_core_id}%")
                 ).all()
+
+                if not target_audios:
+                    # 去掉末尾 _數字 後綴（例：PAM_20250622_020939_784 → PAM_20250622_020939）
+                    import re as _re
+                    trimmed_id = _re.sub(r'_\d+$', '', excel_core_id)
+                    if trimmed_id != excel_core_id:
+                        target_audios = AudioInfo.query.filter(
+                            AudioInfo.file_name.ilike(f"%{trimmed_id}%")
+                        ).all()
+                        if target_audios:
+                            current_app.logger.info(f"🔁 後綴修剪後配對成功: {excel_core_id} → {trimmed_id}")
 
                 if not target_audios:
                     msg = f"找不到音檔，核心ID: {excel_core_id}"
@@ -220,11 +232,16 @@ def import_excel():
 
                 for index, row in data_df.iterrows():
                     # --- 5. 解析分、秒欄位 → 轉成絕對秒數 ---
+                    # 任一欄位為 NULL → 整行跳過（視為環境噪音，不標鯨魚）
+                    if (pd.isna(row.iloc[start_min_col]) or pd.isna(row.iloc[start_sec_col]) or
+                            pd.isna(row.iloc[end_min_col])   or pd.isna(row.iloc[end_sec_col])):
+                        current_app.logger.info(f"跳過第 {index + 3} 行：含 NULL，視為環境噪音")
+                        continue
                     try:
-                        start_min = float(row.iloc[start_min_col]) if pd.notna(row.iloc[start_min_col]) else 0.0
-                        start_sec = float(row.iloc[start_sec_col]) if pd.notna(row.iloc[start_sec_col]) else 0.0
-                        end_min   = float(row.iloc[end_min_col])   if pd.notna(row.iloc[end_min_col])   else 0.0
-                        end_sec   = float(row.iloc[end_sec_col])   if pd.notna(row.iloc[end_sec_col])   else 0.0
+                        start_min = float(row.iloc[start_min_col])
+                        start_sec = float(row.iloc[start_sec_col])
+                        end_min   = float(row.iloc[end_min_col])
+                        end_sec   = float(row.iloc[end_sec_col])
                     except Exception as e:
                         current_app.logger.warning(f"跳過第 {index + 3} 行：時間解析失敗 ({e})")
                         continue
@@ -275,12 +292,17 @@ def import_excel():
 
                         for calc_idx in range(start_idx, end_idx + 1):
                             # 同一切片若已有鯨魚標記（1~17），不覆蓋；否則寫入
+                            # end_idx 上限由寫入時的 total_slices 把關，這裡先存入，寫入時自動跳過超界
                             existing = audio_updates[target_audio.id].get(calc_idx)
                             if existing is None or not (1 <= existing <= 17):
                                 audio_updates[target_audio.id][calc_idx] = event_type
 
                 # --- 7. 安全寫入：逐音檔 SELECT → 記憶體修改 → commit ---
-                # 先全設為 90，再把 Excel 標記到的切片改為鯨魚，最後一次 commit
+                # 確保所有配對到的音檔都被洗底色（即使 Excel 全空、沒有任何鯨魚標記）
+                for target_audio in target_audios:
+                    if target_audio.id not in audio_updates:
+                        audio_updates[target_audio.id] = {}  # 空字典 = 全部洗 90，無鯨魚
+
                 for audio_id, whale_indices in audio_updates.items():
                     try:
                         all_records = (
@@ -312,7 +334,7 @@ def import_excel():
                                 all_records[idx].detect_type = 0
                                 db_slice_updated += 1
                             else:
-                                current_app.logger.warning(
+                                current_app.logger.debug(
                                     f"切片索引 {idx} 超出範圍（共 {total_slices} 個），跳過"
                                 )
 
