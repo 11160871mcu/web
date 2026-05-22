@@ -102,19 +102,19 @@
                     <p style="margin-bottom: 1rem; color: #64748b;">請選擇您要包含在壓縮檔內的資料類型：</p>
                     <div class="form-group" style="display: flex; flex-direction: column; gap: 0.8rem;">
                         <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
-                            <input type="checkbox" name="export_options" value="images" checked>
+                            <input type="checkbox" id="cb-images">
                             <strong>頻譜圖切片</strong> (AI 視覺辨識訓練用圖片)
                         </label>
                         <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
-                            <input type="checkbox" name="export_options" value="audio" checked>
+                            <input type="checkbox" id="cb-audio">
                             <strong>音檔切片</strong> (原始切割後的 .wav 音檔片段)
                         </label>
                         <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
-                            <input type="checkbox" name="export_options" value="csv" checked>
+                            <input type="checkbox" id="cb-csv" checked>
                             <strong>整體標記資料</strong> (labels.csv - 包含每張切片的分類標籤)
                         </label>
                         <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
-                            <input type="checkbox" name="export_options" value="bbox" checked>
+                            <input type="checkbox" id="cb-bbox">
                             <strong>進階框選資料</strong> (bbox_annotations.csv - 包含框選座標與頻率範圍)
                         </label>
                     </div>
@@ -427,9 +427,42 @@
     function closeExportModal() { document.getElementById('export-modal').classList.remove('active'); }
 
     function confirmExport() {
-        const form = document.getElementById('history-form');
-        form.action = "{{ url_for('main.batch_download_zip') }}";
+        const selectedIds = getSelectedIds();
+        if (selectedIds.length === 0) { alert('請至少選取一個項目進行匯出。'); return; }
+
+        const includeImages = document.getElementById('cb-images').checked;
+        const includeAudio  = document.getElementById('cb-audio').checked;
+        const includeCsv    = document.getElementById('cb-csv').checked;
+        const includeBbox   = document.getElementById('cb-bbox').checked;
+
+        if (!includeImages && !includeAudio && !includeCsv && !includeBbox) {
+            alert('請至少選擇一項匯出內容！');
+            return;
+        }
+
+        // 動態建立一個隱藏 form，POST 到 download_multiple_datasets_zip
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = "{{ url_for('main.download_multiple_datasets_zip') }}";
+
+        // 加入所有選取的 upload_id
+        selectedIds.forEach(id => {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'upload_ids';
+            input.value = id;
+            form.appendChild(input);
+        });
+
+        // 加入勾選的 export_options
+        if (includeImages) { const i = document.createElement('input'); i.type='hidden'; i.name='export_options'; i.value='images'; form.appendChild(i); }
+        if (includeAudio)  { const i = document.createElement('input'); i.type='hidden'; i.name='export_options'; i.value='audio';  form.appendChild(i); }
+        if (includeCsv)    { const i = document.createElement('input'); i.type='hidden'; i.name='export_options'; i.value='csv';    form.appendChild(i); }
+        if (includeBbox)   { const i = document.createElement('input'); i.type='hidden'; i.name='export_options'; i.value='bbox';   form.appendChild(i); }
+
+        document.body.appendChild(form);
         form.submit();
+        document.body.removeChild(form);
         closeExportModal();
     }
 
