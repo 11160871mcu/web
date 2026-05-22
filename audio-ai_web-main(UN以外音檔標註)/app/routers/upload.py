@@ -177,21 +177,31 @@ def import_excel():
                 excel_core_id = sheet_name.strip()
 
                 # --- 2. 配對資料庫中的音檔 ---
-                # 先用完整 core_id 配對，找不到時去掉末尾 _數字 後綴再試一次
+                # 優先：精確比對副檔名（避免 PAM_026 誤配到 PAM_0260）
                 target_audios = AudioInfo.query.filter(
-                    AudioInfo.file_name.ilike(f"%{excel_core_id}%")
+                    AudioInfo.file_name.in_([
+                        f"{excel_core_id}.wav",
+                        f"{excel_core_id}.mp3",
+                        f"{excel_core_id}.flac",
+                    ])
                 ).all()
 
-                if not target_audios:
-                    # 去掉末尾 _數字 後綴（例：PAM_20250622_020939_784 → PAM_20250622_020939）
-                    import re as _re
-                    trimmed_id = _re.sub(r'_\d+$', '', excel_core_id)
+                if target_audios:
+                    current_app.logger.info(f"✅ 精確比對成功: {excel_core_id}，共 {len(target_audios)} 筆")
+                else:
+                    # 次優：去掉末尾 _數字 後綴再精確比對
+                    # 例：PAM_20250622_020939_784 → PAM_20250622_020939
+                    trimmed_id = re.sub(r'_\d+$', '', excel_core_id)
                     if trimmed_id != excel_core_id:
                         target_audios = AudioInfo.query.filter(
-                            AudioInfo.file_name.ilike(f"%{trimmed_id}%")
+                            AudioInfo.file_name.in_([
+                                f"{trimmed_id}.wav",
+                                f"{trimmed_id}.mp3",
+                                f"{trimmed_id}.flac",
+                            ])
                         ).all()
                         if target_audios:
-                            current_app.logger.info(f"🔁 後綴修剪後配對成功: {excel_core_id} → {trimmed_id}")
+                            current_app.logger.info(f"🔁 後綴修剪後精確比對成功: {excel_core_id} → {trimmed_id}，共 {len(target_audios)} 筆")
 
                 if not target_audios:
                     msg = f"找不到音檔，核心ID: {excel_core_id}"
