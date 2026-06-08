@@ -259,11 +259,20 @@ def import_excel():
                     calc_start_time = start_min * 60.0 + start_sec
                     calc_end_time   = end_min   * 60.0 + end_sec
 
-                    if calc_end_time <= calc_start_time:
+                    if calc_end_time < calc_start_time:
                         current_app.logger.warning(
-                            f"跳過第 {index + 3} 行：結束時間({calc_end_time}s) <= 起始時間({calc_start_time}s)"
+                            f"跳過第 {index + 3} 行：結束時間({calc_end_time}s) < 起始時間({calc_start_time}s)"
                         )
                         continue
+
+                    # 開始時間 == 結束時間：視為瞬間事件，
+                    # 標記「包含該時間點」的所有切片（通常只有 1 個）
+                    if calc_end_time == calc_start_time:
+                        current_app.logger.info(
+                            f"第 {index + 3} 行：開始時間 == 結束時間 ({calc_start_time}s)，視為瞬間鯨魚事件"
+                        )
+                        # 讓結束時間加一個極小偏移，使下方切片計算能取到該點所在的切片
+                        calc_end_time = calc_start_time + 1e-6
 
                     # 有寫記錄的行 = 鯨魚
                     event_type = 1
